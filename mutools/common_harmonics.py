@@ -22,23 +22,35 @@ class CommonHarmonic(object):
     doesn't have to be changed to occur in both pitches.
     """
 
-    # hard coded attributes
-    not_authentic_factor = 0.75  # how much non authentic partials should be quieter
-    max_low, max_high = -3, 3  # lowest and highest octave
-    volume_range = 12  # how much to distiniguish between closer and further partials
-
-    oct_diff = (max_high - max_low) + 1
-    harmonic2volume = tuple(
-        1 / item for item in np.linspace(1, volume_range, MAX_HARMONIC, dtype=float)
-    )
-
     def __init__(
-        self, pitch: ji.JIPitch, order: tuple, gender: bool, is_authentic: bool
+        self,
+        pitch: ji.JIPitch,
+        order: tuple,
+        gender: bool,
+        is_authentic: bool,
+        max_low: int = -3,
+        max_high: int = 3,
+        volume_range: int = 12,
+        not_authentic_factor: float = 0.75,
     ) -> None:
         self.__pitch = pitch
         self.__order = sum(order) // len(order)
         self.__gender = gender
         self.__is_authentic = is_authentic
+
+        # how much to distiniguish between closer and further partials
+        self.volume_range = volume_range
+
+        # lowest and highest octave
+        self.max_low = max_low
+        self.max_high = max_high
+        self.oct_diff = (max_high - max_low) + 1
+        self.harmonic2volume = tuple(
+            1 / item for item in np.linspace(1, volume_range, MAX_HARMONIC, dtype=float)
+        )
+
+        # how much non authentic partials should be quieter
+        self.not_authentic_factor = not_authentic_factor
 
     def __repr__(self) -> str:
         return "CommonHarmonic({} {})".format(self.pitch, self.order)
