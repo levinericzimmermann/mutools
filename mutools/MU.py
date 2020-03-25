@@ -107,9 +107,10 @@ class _SegmentMeta(type):
 class Segment(_NamedObject, metaclass=_SegmentMeta):
     orchestration = Orchestration()
 
-    def __init__(self, name: str, **kwargs) -> None:
+    def __init__(self, name: str, start: float = 0, **kwargs) -> None:
         _NamedObject.__init__(self, name)
         self.__data = kwargs
+        self.__start = start
 
         for name in kwargs:
 
@@ -120,6 +121,10 @@ class Segment(_NamedObject, metaclass=_SegmentMeta):
                 raise AttributeError(msg)
 
             setattr(self, name, kwargs[name])
+
+    @property
+    def start(self) -> float:
+        return self.__start
 
     def __repr__(self) -> str:
         return "Segment({})".format(self.name)
@@ -223,9 +228,26 @@ class MU(_NamedObject):
             minima_start_position_of_tracks_for_first_segment
         )
 
-        duration_per_segment = list(segment.duration for segment in self.segments)
-        duration_per_segment[0] += added_value_for_start_position_for_first_segment
-        start_position_per_segment = tools.accumulate_from_zero(duration_per_segment)
+        adapted_duration_per_segment = list(
+            segment.duration for segment in self.segments
+        )
+        for idx, segment in enumerate(self.segments[1:]):
+            adapted_duration_per_segment[idx] += segment.start
+
+        adapted_duration_per_segment[
+            0
+        ] += added_value_for_start_position_for_first_segment
+        start_position_per_segment = tuple(
+            position + self.segments[0].start
+            for position in tools.accumulate_from_zero(adapted_duration_per_segment)
+        )
+
+        for start_position in start_position_per_segment:
+            try:
+                assert start_position >= 0
+            except AssertionError:
+                msg = "Segment has a too low start value."
+                raise ValueError(msg)
 
         orc_name = ".concatenate.orc"
         sco_name = ".concatenate.sco"

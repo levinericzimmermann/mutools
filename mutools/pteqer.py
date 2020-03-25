@@ -77,7 +77,7 @@ class AttributeMaker(object):
             poly = old.Polyphon(v for v_idx1, v in enumerate(voices) if v_idx1 != v_idx)
             melody = voice.copy()
             interval_and_time_pairs_per_tone = []
-            for tone in melody.convert2absolute_time():
+            for tone in melody.convert2absolute():
                 start, stop = tone.delay, tone.duration
                 simultan_events = functools.reduce(
                     operator.add, tuple(m[:] for m in poly.cut_up_by_time(start, stop))

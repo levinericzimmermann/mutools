@@ -22,6 +22,40 @@ class SoundEngine(abc.ABC):
         raise NotImplementedError
 
 
+class BasedCsoundEngine(SoundEngine):
+    print_output = False
+
+    @abc.abstractmethod
+    def cname(self) -> str:
+        raise NotImplementedError
+
+    @abc.abstractproperty
+    def orc(self) -> str:
+        raise NotImplementedError
+
+    @abc.abstractproperty
+    def sco(self) -> str:
+        raise NotImplementedError
+
+    def render(self, name: str) -> None:
+        orc_name = "{}.orc".format(self.cname)
+        sco_name = "{}.sco".format(self.cname)
+
+        orc = self.orc
+        sco = self.sco
+
+        for fname, data in ((orc_name, orc), (sco_name, sco)):
+            with open(fname, "w") as f:
+                f.write(data)
+
+        csound.render_csound(
+            "{}.wav".format(name), orc_name, sco_name, print_output=self.print_output
+        )
+
+        os.remove(orc_name)
+        os.remove(sco_name)
+
+
 class SilenceEngine(SoundEngine):
     def __init__(self, duration: float) -> None:
         self.__duration = duration
