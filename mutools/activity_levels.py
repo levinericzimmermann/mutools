@@ -16,7 +16,7 @@ class ActivityLevel(object):
     """Activity Levels is a concept derived from M. Edwards.
 
     This is a Python implementation of the Activity Levels.
-    Quoting M. Edwards Activity Levels are an "object for determining
+    Quoting Michael Edwards Activity Levels are an "object for determining
     (deterministically) on a call-by-call basis whether a process is active
     or not (boolean).  This is determined by nine 10-element lists
     (actually three versions of each) of hand-coded 1s and 0s, each list
@@ -92,7 +92,7 @@ class ActivityLevel(object):
 
     __allowed_range = tuple(range(11))
 
-    def __init__(self, start_at: int = 0) -> None:
+    def __init__(self, start_at: int = 0, inverse: bool = False) -> None:
         try:
             assert start_at in (0, 1, 2)
         except AssertionError:
@@ -112,9 +112,14 @@ class ActivityLevel(object):
             )
             for levels in self.__activity_levels
         )
+        self.__inverse = inverse
+
+    @property
+    def inverse(self) -> bool:
+        return self.__inverse
 
     def __repr__(self) -> str:
-        return "ActivityLevel()"
+        return "ActivityLevel({})".format(self.inverse)
 
     def __call__(self, lv: int) -> bool:
         try:
@@ -123,4 +128,9 @@ class ActivityLevel(object):
             msg = "lv is {} but has to be in range {}!".format(lv, self.__allowed_range)
             raise ValueError(msg)
 
-        return bool(next(self.__activity_levels[lv]))
+        val = bool(next(self.__activity_levels[lv]))
+
+        if self.inverse:
+            return not val
+        else:
+            return val
