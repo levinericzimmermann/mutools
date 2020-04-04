@@ -7,7 +7,7 @@ setup(
     description="Personal composition tools of Levin Eric Zimmermann.",
     author="Levin Eric Zimmermann",
     author_email="levin-eric.zimmermann@folkwang-uni.de",
-    url="https://github.com/uummoo/mu",
+    url="https://github.com/levinericzimmermann/mu",
     packages=[
         "mutools",
     ],

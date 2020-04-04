@@ -11,7 +11,8 @@ from mu.rhy import binr
 
 from mu.utils import tools
 
-from mutools import ambitus
+from . import ambitus
+from . import counterpoint_constraints as constraints
 
 
 """This module contains different algorithms that model counterpoint-like structures."""
