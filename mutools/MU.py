@@ -107,10 +107,14 @@ class _SegmentMeta(type):
 class Segment(_NamedObject, metaclass=_SegmentMeta):
     orchestration = Orchestration()
 
-    def __init__(self, name: str, start: float = 0, **kwargs) -> None:
+    def __init__(
+        self, name: str, start: float = 0, tracks2ignore: tuple = tuple([]), **kwargs
+    ) -> None:
         _NamedObject.__init__(self, name)
         self.__data = kwargs
         self.__start = start
+        # tracks that can be ignored for calculating the duration of a Segment
+        self.__tracks2ignore = tracks2ignore
 
         for name in kwargs:
 
@@ -151,6 +155,7 @@ class Segment(_NamedObject, metaclass=_SegmentMeta):
         return max(
             getattr(self, track.name)["start"] + getattr(self, track.name)["duration"]
             for track in self.orchestration
+            if track.name not in self.__tracks2ignore
         )
 
 
@@ -271,7 +276,7 @@ class MU(_NamedObject):
                 if is_first_segment:
                     start_position += added_value_for_start_position_for_first_segment
 
-                duration = segment.duration + self.tail
+                duration = getattr(segment, track.name)["duration"] + self.tail
                 relevant_data.append((start_position, duration, path))
 
                 is_first_segment = False
@@ -314,20 +319,26 @@ class MU(_NamedObject):
         with open(orc_name, "w") as f:
             f.write(self.__make_sampler_orc(n_channels=2))
 
+        path_per_concatenated_file = tuple(
+            "{}/{}/{}.wav".format(self.name, self.__concatenated_path, track.name)
+            for track in self.orchestration
+        )
+
         sco = " \n".join(
             tuple(
-                'i1 0 {} "{}/{}/{}.wav" {} {} {}'.format(
-                    self.duration + self.tail,
-                    self.name,
-                    self.__concatenated_path,
-                    track.name,
+                'i1 0 {} "{}" {} {} {}'.format(
+                    synthesis.pyo.sndinfo(track_path)[1] + self.tail,
+                    track_path,
                     track.volume,
                     track.volume_left,
                     track.volume_right,
                 )
-                for track in self.orchestration
+                for track_path, track in zip(
+                    path_per_concatenated_file, self.orchestration
+                )
             )
         )
+
         with open(sco_name, "w") as f:
             f.write(sco)
 
