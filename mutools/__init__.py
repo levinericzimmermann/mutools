@@ -1,4 +1,3 @@
-from mutools import activity_levels
 from mutools import alternating_hands
 from mutools import counterpoint
 from mutools import common_harmonics
