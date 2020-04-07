@@ -99,42 +99,46 @@ def find_common_harmonics(
 
     Return tuple containing CommonHarmonic objects.
     """
-    harmonics = tuple(ji.r(b + 1, 1) for b in range(border))
+    if not p0.is_empty and not p1.is_empty:
+        harmonics = tuple(ji.r(b + 1, 1) for b in range(border))
 
-    if not gender:
-        harmonics = tuple(p.inverse() for p in harmonics)
+        if not gender:
+            harmonics = tuple(p.inverse() for p in harmonics)
 
-    harmonics_per_pitch = tuple(tuple(p + h for h in harmonics) for p in (p0, p1))
-    authentic_harmonics = list(
-        (h, idx0, harmonics_per_pitch[1].index(h), True)
-        for idx0, h in enumerate(harmonics_per_pitch[0])
-        if h in harmonics_per_pitch[1]
-    )
-    normalized_authentic_harmonics = tuple(
-        h[0].normalize() for h in authentic_harmonics
-    )
+        harmonics_per_pitch = tuple(tuple(p + h for h in harmonics) for p in (p0, p1))
+        authentic_harmonics = list(
+            (h, idx0, harmonics_per_pitch[1].index(h), True)
+            for idx0, h in enumerate(harmonics_per_pitch[0])
+            if h in harmonics_per_pitch[1]
+        )
+        normalized_authentic_harmonics = tuple(
+            h[0].normalize() for h in authentic_harmonics
+        )
 
-    normalized_harmonics_per_pitch = tuple(
-        tuple(p.normalize() for p in har) for har in harmonics_per_pitch
-    )
-    octaves_per_harmonic = tuple(
-        tuple(p.octave for p in har) for har in harmonics_per_pitch
-    )
-    unauthentic_harmonics = []
-    for har0_idx, har0 in enumerate(normalized_harmonics_per_pitch[0]):
-        if har0 not in normalized_authentic_harmonics:
-            if har0 in normalized_harmonics_per_pitch[1]:
-                har1_idx = normalized_harmonics_per_pitch[1].index(har0)
-                oc = tuple(
-                    octaves[idx]
-                    for octaves, idx in zip(octaves_per_harmonic, (har0_idx, har1_idx))
-                )
-                unauthentic_harmonics.append((har0,) + oc + (False,))
+        normalized_harmonics_per_pitch = tuple(
+            tuple(p.normalize() for p in har) for har in harmonics_per_pitch
+        )
+        octaves_per_harmonic = tuple(
+            tuple(p.octave for p in har) for har in harmonics_per_pitch
+        )
+        unauthentic_harmonics = []
+        for har0_idx, har0 in enumerate(normalized_harmonics_per_pitch[0]):
+            if har0 not in normalized_authentic_harmonics:
+                if har0 in normalized_harmonics_per_pitch[1]:
+                    har1_idx = normalized_harmonics_per_pitch[1].index(har0)
+                    oc = tuple(
+                        octaves[idx]
+                        for octaves, idx in zip(octaves_per_harmonic, (har0_idx, har1_idx))
+                    )
+                    unauthentic_harmonics.append((har0,) + oc + (False,))
 
-    return tuple(
-        CommonHarmonic(h[0], (h[1], h[2]), gender, h[3])
-        for h in authentic_harmonics + unauthentic_harmonics
-    )
+        return tuple(
+            CommonHarmonic(h[0], (h[1], h[2]), gender, h[3])
+            for h in authentic_harmonics + unauthentic_harmonics
+        )
+
+    else:
+        return tuple([])
 
 
 def mk_harmonics_melodies(
