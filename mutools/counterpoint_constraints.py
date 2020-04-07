@@ -34,8 +34,11 @@ class HR_forbid_too_empty_harmonies(HRconstraint):
         nth_harmony: int,
         n_harmonies: int,
     ) -> bool:
-        for harmony in concrete_harmonies:
-            if len(tuple(p for p in harmony if p.is_empty)) > self.__max_n_voices_empty:
+        for harmony_and_dissonant_pitches in concrete_harmonies:
+            n_empty_pitches = len(
+                tuple(p for p in harmony_and_dissonant_pitches[0] if p.is_empty)
+            )
+            if n_empty_pitches > self.__max_n_voices_empty:
                 return False
         return True
 

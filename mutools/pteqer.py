@@ -210,8 +210,9 @@ class AttributeMaker(object):
                 normalized_harmonicity, metric_strength_per_tone
             ):
                 volume = min_vol + (
-                    absolute_dynamic_range * ((harmonicity * 0.45) + (metricity * 0.65))
+                    absolute_dynamic_range * ((harmonicity * 0.5) + (metricity * 0.5))
                 )
+                assert volume <= 1 and volume >= 0
                 volumes.append(volume)
             vol_per_voice.append(tuple(volumes))
         return tuple(vol_per_voice)
@@ -220,7 +221,7 @@ class AttributeMaker(object):
 def mk_empty_attack(
     duration: float,
     volume: float,
-    frequencey: float = 20,
+    frequency: float = 35,
     hammer_noise: float = 3,
     impedance: float = 0.3,
     cutoff: float = 0.3,
@@ -228,13 +229,13 @@ def mk_empty_attack(
     string_length: float = 0.8,
     strike_point: float = 1 / 2,
     hammer_hard_piano: float = None,
-    hammer_hard_mezzo: float = 1,
+    hammer_hard_mezzo: float = 1.5,
     hammer_hard_forte: float = 2,
     blooming_energy=None,
 ) -> midiplug.PyteqTone:
     """Helps making percussive sounds with Pianoteq."""
     return midiplug.PyteqTone(
-        ji.JIPitch(ji.r(1, 1), multiply=frequencey),
+        ji.JIPitch(ji.r(1, 1), multiply=frequency),
         duration,
         duration,
         volume=volume,
