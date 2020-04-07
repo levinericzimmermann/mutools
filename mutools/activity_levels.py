@@ -92,7 +92,7 @@ class ActivityLevel(object):
 
     __allowed_range = tuple(range(11))
 
-    def __init__(self, start_at: int = 0, inverse: bool = False) -> None:
+    def __init__(self, start_at: int = 0, is_inverse: bool = False) -> None:
         try:
             assert start_at in (0, 1, 2)
         except AssertionError:
@@ -112,14 +112,14 @@ class ActivityLevel(object):
             )
             for levels in self.__activity_levels
         )
-        self.__inverse = inverse
+        self.__is_inverse = is_inverse
 
     @property
-    def inverse(self) -> bool:
-        return self.__inverse
+    def is_inverse(self) -> bool:
+        return self.__is_inverse
 
     def __repr__(self) -> str:
-        return "ActivityLevel({})".format(self.inverse)
+        return "ActivityLevel({})".format(self.is_inverse)
 
     def __call__(self, lv: int) -> bool:
         try:
@@ -130,7 +130,7 @@ class ActivityLevel(object):
 
         val = bool(next(self.__activity_levels[lv]))
 
-        if self.inverse:
+        if self.is_inverse:
             return not val
         else:
             return val
