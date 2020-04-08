@@ -22,8 +22,9 @@ class HRconstraint(abc.ABC):
 class HR_forbid_too_empty_harmonies(HRconstraint):
     """Make sure only n voices can have a rest per chord."""
 
-    def __init__(self, max_n_voices_empty: int) -> None:
+    def __init__(self, max_n_voices_empty: int, ignore_nth_harmonies: tuple) -> None:
         self.__max_n_voices_empty = max_n_voices_empty
+        self.__ignore_nth_harmonies = ignore_nth_harmonies
 
     def __call__(
         self,
@@ -34,12 +35,16 @@ class HR_forbid_too_empty_harmonies(HRconstraint):
         nth_harmony: int,
         n_harmonies: int,
     ) -> bool:
-        for harmony_and_dissonant_pitches in concrete_harmonies:
-            n_empty_pitches = len(
-                tuple(p for p in harmony_and_dissonant_pitches[0] if p.is_empty)
-            )
-            if n_empty_pitches > self.__max_n_voices_empty:
-                return False
+        for harmony_idx, harmony_and_dissonant_pitches in enumerate(concrete_harmonies):
+
+            if harmony_idx not in self.__ignore_nth_harmonies:
+
+                n_empty_pitches = len(
+                    tuple(p for p in harmony_and_dissonant_pitches[0] if p.is_empty)
+                )
+                if n_empty_pitches > self.__max_n_voices_empty:
+                    return False
+
         return True
 
 
