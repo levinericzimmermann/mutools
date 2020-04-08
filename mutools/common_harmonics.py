@@ -128,7 +128,9 @@ def find_common_harmonics(
                     har1_idx = normalized_harmonics_per_pitch[1].index(har0)
                     oc = tuple(
                         octaves[idx]
-                        for octaves, idx in zip(octaves_per_harmonic, (har0_idx, har1_idx))
+                        for octaves, idx in zip(
+                            octaves_per_harmonic, (har0_idx, har1_idx)
+                        )
                     )
                     unauthentic_harmonics.append((har0,) + oc + (False,))
 

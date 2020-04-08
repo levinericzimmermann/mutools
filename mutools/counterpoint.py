@@ -612,6 +612,7 @@ class RhythmicCP(object):
 
     def __add_dissonant_pitches_to_one_voice(
         self,
+        voice_idx: int,
         voice: tuple,
         harmonic_frame_abstract: tuple,
         harmonic_frame_converted: tuple,
@@ -823,7 +824,7 @@ class RhythmicCP(object):
 
         # change result by user definied constrains
         for constrain in self.__constraints_added_pitches:
-            data = constrain(data)
+            data = constrain(voice_idx, data)
 
         return data
 
@@ -836,7 +837,7 @@ class RhythmicCP(object):
 
         return tuple(
             self.__add_dissonant_pitches_to_one_voice(
-                vox, harmonic_frame_abstract, harmonic_frame_converted
+                vox_idx, vox, harmonic_frame_abstract, harmonic_frame_converted
             )
-            for vox in voices
+            for vox_idx, vox in enumerate(voices)
         )
