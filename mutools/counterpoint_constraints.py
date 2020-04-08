@@ -22,7 +22,9 @@ class HRconstraint(abc.ABC):
 class HR_forbid_too_empty_harmonies(HRconstraint):
     """Make sure only n voices can have a rest per chord."""
 
-    def __init__(self, max_n_voices_empty: int, ignore_nth_harmonies: tuple) -> None:
+    def __init__(
+        self, max_n_voices_empty: int, ignore_nth_harmonies: tuple = tuple([])
+    ) -> None:
         self.__max_n_voices_empty = max_n_voices_empty
         self.__ignore_nth_harmonies = ignore_nth_harmonies
 
