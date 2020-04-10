@@ -119,6 +119,10 @@ class RhythmicCP(object):
         )
         self.__n_harmonic_changes = len(self.__harmonic_changes)
 
+    @property
+    def harmonies(self) -> tuple:
+        return self.__harmonies
+
     @staticmethod
     def find_harmonic_index_per_beat(duration: int, harmonic_changes: tuple) -> tuple:
         """Identify the harmony for each beat.
@@ -369,6 +373,7 @@ class RhythmicCP(object):
 
         return all(
             constrain(
+                self,
                 abstract_harmonies,
                 converted_harmonies,
                 weight,

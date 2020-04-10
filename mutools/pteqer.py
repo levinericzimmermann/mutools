@@ -228,10 +228,10 @@ def mk_empty_attack(
     q_factor: float = 5,
     string_length: float = 0.8,
     strike_point: float = 1 / 2,
-    hammer_hard_piano: float = None,
+    hammer_hard_piano: float = 1,
     hammer_hard_mezzo: float = 1.5,
     hammer_hard_forte: float = 2,
-    blooming_energy=None,
+    blooming_energy: float = 0,
 ) -> midiplug.PyteqTone:
     """Helps making percussive sounds with Pianoteq."""
     return midiplug.PyteqTone(
