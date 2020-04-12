@@ -14,7 +14,6 @@ from mu.utils import tools
 from . import ambitus
 from . import counterpoint_constraints as constraints
 
-
 """This module contains different algorithms that model counterpoint-like structures."""
 
 
@@ -82,7 +81,11 @@ class RhythmicCP(object):
         ),
         start_harmony: tuple = None,
         use_sorting_algorithm: bool = True,
+        add_dissonant_pitches_to_nth_voice: tuple = None,
     ) -> None:
+
+        if add_dissonant_pitches_to_nth_voice is None:
+            add_dissonant_pitches_to_nth_voice = tuple(True for i in rhythm_per_voice)
 
         # testing for correct arguments
         self.test_arguments_for_equal_size(
@@ -98,7 +101,6 @@ class RhythmicCP(object):
         if weights_per_beat is None:
             weights_per_beat = tuple(1 for i in range(self.__duration))
 
-        # TODO(Check later which of those attributes are really used!)
         self.__start_harmony = start_harmony
         self.__stepsize = stepsize
         self.__stepsize_centre = stepsize[1] - stepsize[0]
@@ -109,6 +111,7 @@ class RhythmicCP(object):
         self.__harmonies = harmonies
         self.__rhythm_per_voice = rhythm_per_voice
         self.__use_sorting_algorithm = use_sorting_algorithm
+        self.__add_dissonant_pitches_to_nth_voice = add_dissonant_pitches_to_nth_voice
 
         self.__harmonic_network = self.make_harmonic_network(
             self.__n_voices, harmonies, harmonies
@@ -623,215 +626,226 @@ class RhythmicCP(object):
         harmonic_frame_converted: tuple,
     ) -> tuple:
 
-        pitches = []
-        absolute_beats = []
-        is_not_dissonant_pitch = []
+        if self.__add_dissonant_pitches_to_nth_voice[voice_idx]:
 
-        for pitch0, pitch1, absolute_position0, absolute_position1 in zip(
-            voice[0],
-            voice[0][1:],
-            voice[1].convert2absolute(),
-            voice[1].convert2absolute()[1:],
-        ):
+            pitches = []
+            absolute_beats = []
+            is_not_dissonant_pitch = []
 
-            absolute_position0 = int(absolute_position0)
-            absolute_position1 = int(absolute_position1)
+            for pitch0, pitch1, absolute_position0, absolute_position1 in zip(
+                voice[0],
+                voice[0][1:],
+                voice[1].convert2absolute(),
+                voice[1].convert2absolute()[1:],
+            ):
 
-            pitches.append(pitch0)
-            absolute_beats.append(absolute_position0)
-            is_not_dissonant_pitch.append(True)
+                absolute_position0 = int(absolute_position0)
+                absolute_position1 = int(absolute_position1)
 
-            if pitch0 is not mel.TheEmptyPitch and pitch1 is not mel.TheEmptyPitch:
-                distance = pitch1 - pitch0
-                distance_ct = distance.cents
+                pitches.append(pitch0)
+                absolute_beats.append(absolute_position0)
+                is_not_dissonant_pitch.append(True)
 
-            else:
-                distance_ct = 0
+                if pitch0 is not mel.TheEmptyPitch and pitch1 is not mel.TheEmptyPitch:
+                    distance = pitch1 - pitch0
+                    distance_ct = distance.cents
 
-            if abs(distance_ct) > self.__stepsize[1]:
-
-                if distance_ct > 0:
-                    is_rising = True
                 else:
-                    is_rising = False
+                    distance_ct = 0
 
-                available_harmony_indices_per_beat = self.__harmonic_index_per_beat[
-                    absolute_position0:absolute_position1
-                ]
+                if abs(distance_ct) > self.__stepsize[1]:
 
-                area_per_harmony = collections.Counter(
-                    available_harmony_indices_per_beat
-                )
-                area_per_harmony = tuple(
-                    area_per_harmony[harmony_idx]
-                    for harmony_idx in sorted(area_per_harmony)
-                )
-                area_per_harmony = tuple(
-                    absolute_position0 + position
-                    for position in tools.accumulate_from_zero(area_per_harmony)
-                )
-                area_per_harmony = tuple(
-                    (a, b) for a, b in zip(area_per_harmony, area_per_harmony[1:])
-                )
-
-                available_harmony_indices = tuple(
-                    sorted(set(available_harmony_indices_per_beat))
-                )
-                dissonant_pitches_of_available_harmonies = tuple(
-                    self.__set_pitches_to_correct_frame(
-                        harmonic_frame_converted[idx][1], pitch0, pitch1
-                    )
-                    for idx in available_harmony_indices
-                )
-                n_available_harmonies = len(available_harmony_indices)
-
-                found_pitches_per_harmony = [
-                    [] for harmony in available_harmony_indices
-                ]
-
-                last_pitch = pitch0
-
-                nth_harmony = 0
-                while True:
-                    filtered_pitches_per_harmony = tuple(
-                        self.__filter_pitches_that_are_in_right_direction(
-                            last_pitch,
-                            dissonant_pitches_of_available_harmonies[nth_har],
-                            is_rising,
-                        )
-                        for nth_har in range(nth_harmony, n_available_harmonies)
-                    )
-
-                    pitches_per_harmony_in_step_distance = tuple(
-                        self.__filter_pitches_that_are_in_step_distance(
-                            filtered_pitches
-                        )
-                        for filtered_pitches in filtered_pitches_per_harmony
-                    )
-
-                    if any(pitches_per_harmony_in_step_distance):
-                        # try to use pitches that are within step distance
-                        # towards the previous pitch.
-                        for n_higher_harmony, pitches_in_step_distance in enumerate(
-                            pitches_per_harmony_in_step_distance
-                        ):
-                            if pitches_in_step_distance:
-                                nth_harmony += n_higher_harmony
-                                break
-
-                        choosen_pitch_index = tools.find_closest_index(
-                            self.__stepsize_centre,
-                            tuple(
-                                pitch_and_cent_pair[1]
-                                for pitch_and_cent_pair in pitches_in_step_distance
-                            ),
-                        )
-                        choosen_pitch = pitches_in_step_distance[choosen_pitch_index][0]
-                        found_pitches_per_harmony[nth_harmony].append(choosen_pitch)
-                        last_pitch = choosen_pitch
-
-                    elif any(filtered_pitches_per_harmony):
-                        # in case there are no pitches within step distance,
-                        # try to find the closest pitch outside of step
-                        # distance
-                        harmony_pitch_index_and_cent_pairs = []
-                        for harmony_idx, filtered_pitches in enumerate(
-                            filtered_pitches_per_harmony
-                        ):
-                            for pitch_idx, pitch_and_cent_pair in enumerate(
-                                filtered_pitches
-                            ):
-                                harmony_pitch_index_and_cent_pairs.append(
-                                    ((harmony_idx, pitch_idx), pitch_and_cent_pair[1])
-                                )
-
-                        choosen_pitch_data = sorted(
-                            harmony_pitch_index_and_cent_pairs,
-                            key=operator.itemgetter(1),
-                        )[0]
-                        nth_harmony += choosen_pitch_data[0][0]
-                        choosen_pitch = filtered_pitches_per_harmony[
-                            choosen_pitch_data[0][0]
-                        ][choosen_pitch_data[0][1]][0]
-                        found_pitches_per_harmony[nth_harmony].append(choosen_pitch)
-                        last_pitch = choosen_pitch
-
+                    if distance_ct > 0:
+                        is_rising = True
                     else:
-                        break
+                        is_rising = False
 
-                found_pitches = functools.reduce(
-                    operator.add, found_pitches_per_harmony
-                )
+                    available_harmony_indices_per_beat = self.__harmonic_index_per_beat[
+                        absolute_position0:absolute_position1
+                    ]
 
-                # filter out pitches until there are as many pitches as beats
-                # if diff < 0:
-                # TODO(implement solution for this case)
-                # ACTUALLY THIS HAS TO BE DONE IN THE NEXT LOOP.
-                # EVEN IF GLOBALLY THERE IS ENOUGH SPACE / THERE ARE ENOUGH
-                # BEATS FOR ALL PITCHES, IT COULD STILL HAPPEN THAT WITHIN
-                # ONE HARMONY THERE ISN'T ENOUGH SPACE FOR ALL PITCHES
-                # APPEARING IN THIS HARMONY; WHILE ANOTHER HARMONY MAY BE
-                # COMPLETELY EMPTY.
-                # raise NotImplementedError
-
-                for found_pitches, area in zip(
-                    found_pitches_per_harmony, area_per_harmony
-                ):
-
-                    # find beats with the highest value in the respective area
-                    weights_per_beat = self.__weights_per_beat[slice(*area)]
-                    divided_weights_per_beat = tuple(
-                        tools.find_all_indices_of_n(weight, weights_per_beat)
-                        for weight in sorted(set(weights_per_beat), reverse=True)
+                    area_per_harmony = collections.Counter(
+                        available_harmony_indices_per_beat
+                    )
+                    area_per_harmony = tuple(
+                        area_per_harmony[harmony_idx]
+                        for harmony_idx in sorted(area_per_harmony)
+                    )
+                    area_per_harmony = tuple(
+                        absolute_position0 + position
+                        for position in tools.accumulate_from_zero(area_per_harmony)
+                    )
+                    area_per_harmony = tuple(
+                        (a, b) for a, b in zip(area_per_harmony, area_per_harmony[1:])
                     )
 
-                    found_beats = []
-                    beats2find = len(found_pitches) + 1
-                    for division in divided_weights_per_beat:
-                        if beats2find == 0:
-                            break
+                    available_harmony_indices = tuple(
+                        sorted(set(available_harmony_indices_per_beat))
+                    )
+                    dissonant_pitches_of_available_harmonies = tuple(
+                        self.__set_pitches_to_correct_frame(
+                            harmonic_frame_converted[idx][1], pitch0, pitch1
+                        )
+                        for idx in available_harmony_indices
+                    )
+                    n_available_harmonies = len(available_harmony_indices)
 
-                        division_size = len(division)
-                        if division_size <= beats2find:
-                            beats2find -= division_size
-                            found_beats.extend(division)
+                    found_pitches_per_harmony = [
+                        [] for harmony in available_harmony_indices
+                    ]
+
+                    last_pitch = pitch0
+
+                    nth_harmony = 0
+                    while True:
+                        filtered_pitches_per_harmony = tuple(
+                            self.__filter_pitches_that_are_in_right_direction(
+                                last_pitch,
+                                dissonant_pitches_of_available_harmonies[nth_har],
+                                is_rising,
+                            )
+                            for nth_har in range(nth_harmony, n_available_harmonies)
+                        )
+
+                        pitches_per_harmony_in_step_distance = tuple(
+                            self.__filter_pitches_that_are_in_step_distance(
+                                filtered_pitches
+                            )
+                            for filtered_pitches in filtered_pitches_per_harmony
+                        )
+
+                        if any(pitches_per_harmony_in_step_distance):
+                            # try to use pitches that are within step distance
+                            # towards the previous pitch.
+                            for n_higher_harmony, pitches_in_step_distance in enumerate(
+                                pitches_per_harmony_in_step_distance
+                            ):
+                                if pitches_in_step_distance:
+                                    nth_harmony += n_higher_harmony
+                                    break
+
+                            choosen_pitch_index = tools.find_closest_index(
+                                self.__stepsize_centre,
+                                tuple(
+                                    pitch_and_cent_pair[1]
+                                    for pitch_and_cent_pair in pitches_in_step_distance
+                                ),
+                            )
+                            choosen_pitch = pitches_in_step_distance[
+                                choosen_pitch_index
+                            ][0]
+                            found_pitches_per_harmony[nth_harmony].append(choosen_pitch)
+                            last_pitch = choosen_pitch
+
+                        elif any(filtered_pitches_per_harmony):
+                            # in case there are no pitches within step distance,
+                            # try to find the closest pitch outside of step
+                            # distance
+                            harmony_pitch_index_and_cent_pairs = []
+                            for harmony_idx, filtered_pitches in enumerate(
+                                filtered_pitches_per_harmony
+                            ):
+                                for pitch_idx, pitch_and_cent_pair in enumerate(
+                                    filtered_pitches
+                                ):
+                                    harmony_pitch_index_and_cent_pairs.append(
+                                        (
+                                            (harmony_idx, pitch_idx),
+                                            pitch_and_cent_pair[1],
+                                        )
+                                    )
+
+                            choosen_pitch_data = sorted(
+                                harmony_pitch_index_and_cent_pairs,
+                                key=operator.itemgetter(1),
+                            )[0]
+                            nth_harmony += choosen_pitch_data[0][0]
+                            choosen_pitch = filtered_pitches_per_harmony[
+                                choosen_pitch_data[0][0]
+                            ][choosen_pitch_data[0][1]][0]
+                            found_pitches_per_harmony[nth_harmony].append(choosen_pitch)
+                            last_pitch = choosen_pitch
 
                         else:
-                            for idx in tools.accumulate_from_zero(
-                                tools.euclid(division_size, beats2find)
-                            )[:-1]:
-                                found_beats.append(division[idx])
+                            break
 
-                            beats2find = 0
+                    found_pitches = functools.reduce(
+                        operator.add, found_pitches_per_harmony
+                    )
 
-                    for pitch, beat in zip(found_pitches, found_beats[1:]):
-                        pitches.append(pitch)
-                        absolute_beats.append(beat + area[0])
-                        is_not_dissonant_pitch.append(False)
+                    # filter out pitches until there are as many pitches as beats
+                    # if diff < 0:
+                    # TODO(implement solution for this case)
+                    # ACTUALLY THIS HAS TO BE DONE IN THE NEXT LOOP.
+                    # EVEN IF GLOBALLY THERE IS ENOUGH SPACE / THERE ARE ENOUGH
+                    # BEATS FOR ALL PITCHES, IT COULD STILL HAPPEN THAT WITHIN
+                    # ONE HARMONY THERE ISN'T ENOUGH SPACE FOR ALL PITCHES
+                    # APPEARING IN THIS HARMONY; WHILE ANOTHER HARMONY MAY BE
+                    # COMPLETELY EMPTY.
+                    # raise NotImplementedError
 
-                # delete last dissonant pitch if it is too close to the next
-                # main pitch.
-                if len(found_pitches) > 0:
-                    if abs((pitch1 - pitches[-1]).cents) < self.__stepsize[-1]:
-                        del pitches[-1]
-                        del absolute_beats[-1]
-                        del is_not_dissonant_pitch[-1]
+                    for found_pitches, area in zip(
+                        found_pitches_per_harmony, area_per_harmony
+                    ):
 
-        pitches.append(voice[0][-1])
-        absolute_beats.append(voice[1].convert2absolute()[-1])
-        is_not_dissonant_pitch.append(True)
+                        # find beats with the highest value in the respective area
+                        weights_per_beat = self.__weights_per_beat[slice(*area)]
+                        divided_weights_per_beat = tuple(
+                            tools.find_all_indices_of_n(weight, weights_per_beat)
+                            for weight in sorted(set(weights_per_beat), reverse=True)
+                        )
 
-        data = (
-            tuple(pitches),
-            binr.Compound(absolute_beats + [voice[1].beats]).convert2relative(),
-            tuple(is_not_dissonant_pitch),
-        )
+                        found_beats = []
+                        beats2find = len(found_pitches) + 1
+                        for division in divided_weights_per_beat:
+                            if beats2find == 0:
+                                break
 
-        # change result by user definied constrains
-        for constrain in self.__constraints_added_pitches:
-            data = constrain(voice_idx, data)
+                            division_size = len(division)
+                            if division_size <= beats2find:
+                                beats2find -= division_size
+                                found_beats.extend(division)
 
-        return data
+                            else:
+                                for idx in tools.accumulate_from_zero(
+                                    tools.euclid(division_size, beats2find)
+                                )[:-1]:
+                                    found_beats.append(division[idx])
+
+                                beats2find = 0
+
+                        for pitch, beat in zip(found_pitches, found_beats[1:]):
+                            pitches.append(pitch)
+                            absolute_beats.append(beat + area[0])
+                            is_not_dissonant_pitch.append(False)
+
+                    # delete last dissonant pitch if it is too close to the next
+                    # main pitch.
+                    if len(found_pitches) > 0:
+                        if abs((pitch1 - pitches[-1]).cents) < self.__stepsize[-1]:
+                            del pitches[-1]
+                            del absolute_beats[-1]
+                            del is_not_dissonant_pitch[-1]
+
+            pitches.append(voice[0][-1])
+            absolute_beats.append(voice[1].convert2absolute()[-1])
+            is_not_dissonant_pitch.append(True)
+
+            data = (
+                tuple(pitches),
+                binr.Compound(absolute_beats + [voice[1].beats]).convert2relative(),
+                tuple(is_not_dissonant_pitch),
+            )
+
+            # change result by user definied constrains
+            for constrain in self.__constraints_added_pitches:
+                data = constrain(voice_idx, data)
+
+            return data
+
+        else:
+
+            return voice
 
     def __add_dissonant_pitches(
         self,
