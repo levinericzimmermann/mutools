@@ -992,6 +992,8 @@ class RhythmicCP(Counterpoint):
 
 
 class FreeStyleCP(Counterpoint):
+    # TODO(Add possibility to use dissonant pitch interpolation)
+
     def __init__(
         self,
         harmonies: tuple,
@@ -1007,6 +1009,7 @@ class FreeStyleCP(Counterpoint):
         add_dissonant_pitches_to_nth_voice: tuple = None,
         energy_per_voice: tuple = None,
         silence_decider_per_voice: tuple = None,
+        weight_range: tuple = (1, 10),
     ) -> None:
         super().__init__(
             harmonies,
@@ -1031,15 +1034,17 @@ class FreeStyleCP(Counterpoint):
         self._add_activity_al = activity_levels.ActivityLevel()
         self._al_per_voice = tuple(infit.ActivityLevel(lv) for lv in energy_per_voice)
         self._energy_lv_per_beat = self.convert_weights_per_beat2activity_lv_per_beat(
-            self._weights_per_beat
+            self._weights_per_beat, weight_range
         )
 
     @staticmethod
-    def convert_weights_per_beat2activity_lv_per_beat(weights_per_beat: tuple) -> tuple:
+    def convert_weights_per_beat2activity_lv_per_beat(
+        weights_per_beat: tuple, range=(1, 10)
+    ) -> tuple:
         different_weights = tuple(sorted(set(weights_per_beat)))
         n_different_weights = len(different_weights)
         level_per_weight = tools.accumulate_from_n(
-            tools.euclid(9, n_different_weights), 1
+            tools.euclid(range[1] - range[0], n_different_weights), range[0]
         )
         return tuple(
             level_per_weight[different_weights.index(weight)]
@@ -1111,6 +1116,8 @@ class FreeStyleCP(Counterpoint):
                 for combination in possible_combinations
             )
 
+            harmonic_index_per_bar = []
+
             if any(solutions_per_combination):
 
                 if self._add_activity_al(self._energy_lv_per_beat[position]):
@@ -1156,41 +1163,46 @@ class FreeStyleCP(Counterpoint):
                         for solution in possible_solutions:
                             difference = sum(
                                 0 if a == b else 1
-                                for a, b in zip(voices_would_become_tone, solution[1:])
+                                for a, b in zip(voices_would_become_tone, solution[1])
                             )
                             difference_per_solution.append(difference)
 
                         min_difference = min(difference_per_solution)
-                        choosen_solutions = tuple(
-                            solution
-                            for difference, solution in zip(
-                                difference_per_solution, possible_solutions
+
+                        if min_difference <= n_voices - 1:
+
+                            choosen_solutions = tuple(
+                                solution
+                                for difference, solution in zip(
+                                    difference_per_solution, possible_solutions
+                                )
+                                if difference == min_difference
                             )
-                            if difference == min_difference
-                        )
 
-                        # only use the harmonies and throw away the tuple that indicates
-                        # if in the new harmony the changed voices will be either silent
-                        # or get a new pitch
-                        choosen_solutions = tuple(
-                            solution[0] for solution in choosen_solutions
-                        )
+                            # only use the harmonies and throw away the tuple that
+                            # indicates if in the new harmony the changed voices will
+                            # be either silent or get a new pitch
+                            choosen_solutions = tuple(
+                                solution[0] for solution in choosen_solutions
+                            )
 
-                        solutions = self.__sort_solutions_by_least_often_used_pitches(
-                            choosen_solutions, used_pitches_counter
-                        )
-                        choosen_harmony = solutions[0]
+                            solutions = self.__sort_solutions_by_least_often_used_pitches(
+                                choosen_solutions, used_pitches_counter
+                            )
+                            choosen_harmony = solutions[0]
 
-                        harmonies.append(choosen_harmony)
-                        for vox_idx in used_voices:
-                            attack_positions_per_voice[vox_idx].append(position)
+                            harmonies.append(choosen_harmony)
+                            for vox_idx in used_voices:
+                                attack_positions_per_voice[vox_idx].append(position)
 
-                        for pitch in choosen_harmony[0].blueprint:
-                            used_pitches_counter.update({pitch: 1})
+                            harmonic_index_per_bar.append(position)
 
-                        used_pitches_counter.update(
-                            {mel.TheEmptyPitch: len(choosen_harmony[1])}
-                        )
+                            for pitch in choosen_harmony[0].blueprint:
+                                used_pitches_counter.update({pitch: 1})
+
+                            used_pitches_counter.update(
+                                {mel.TheEmptyPitch: len(choosen_harmony[1])}
+                            )
 
             attack_voice_pairs = attack_voice_pairs[1:]
 
@@ -1200,4 +1212,9 @@ class FreeStyleCP(Counterpoint):
             )
             for attacks in attack_positions_per_voice
         )
+
+        harmonic_index_per_bar = tuple(
+            b - a for a, b in zip(harmonic_index_per_bar, harmonic_index_per_bar[1:])
+        )
+
         return tuple(harmonies), rhythm_per_voice
