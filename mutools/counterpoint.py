@@ -316,7 +316,8 @@ class Counterpoint(abc.ABC):
         """
 
         # (1) find harmonic frame
-        harmonic_frame_abstract, rhythm_per_voice = self._find_harmonic_frame(primes)
+        hf_data = self._find_harmonic_frame(primes)
+        harmonic_frame_abstract, rhythm_per_voice, harmonic_index_per_beat = hf_data
         harmonic_frame_converted = self.convert_abstract_harmonies(
             primes, harmonic_frame_abstract
         )
@@ -331,6 +332,7 @@ class Counterpoint(abc.ABC):
             voices_without_added_pitches,
             harmonic_frame_abstract,
             harmonic_frame_converted,
+            harmonic_index_per_beat,
         )
 
         return voices_with_added_pitches, voices_without_added_pitches
@@ -411,6 +413,7 @@ class Counterpoint(abc.ABC):
         voice: tuple,
         harmonic_frame_abstract: tuple,
         harmonic_frame_converted: tuple,
+        harmonic_index_per_beat: tuple,
     ) -> tuple:
 
         if self._add_dissonant_pitches_to_nth_voice[voice_idx]:
@@ -447,7 +450,7 @@ class Counterpoint(abc.ABC):
                     else:
                         is_rising = False
 
-                    available_harmony_indices_per_beat = self._harmonic_index_per_beat[
+                    available_harmony_indices_per_beat = harmonic_index_per_beat[
                         absolute_position0:absolute_position1
                     ]
 
@@ -639,11 +642,16 @@ class Counterpoint(abc.ABC):
         voices: tuple,
         harmonic_frame_abstract: tuple,
         harmonic_frame_converted: tuple,
+        harmonic_index_per_beat: tuple,
     ) -> tuple:
 
         return tuple(
             self.__add_dissonant_pitches_to_one_voice(
-                vox_idx, vox, harmonic_frame_abstract, harmonic_frame_converted
+                vox_idx,
+                vox,
+                harmonic_frame_abstract,
+                harmonic_frame_converted,
+                harmonic_index_per_beat,
             )
             for vox_idx, vox in enumerate(voices)
         )
@@ -733,9 +741,6 @@ class RhythmicCP(Counterpoint):
             add_dissonant_pitches_to_nth_voice,
         )
 
-        self._harmonic_index_per_beat = self.find_harmonic_index_per_beat(
-            self._duration, self._attack_voice_pairs
-        )
         self._n_harmonic_changes = len(self._attack_voice_pairs)
 
     @staticmethod
@@ -988,12 +993,14 @@ class RhythmicCP(Counterpoint):
             possible_solutions_per_item, indices_of_choosen_solutions
         )
 
-        return harmonies, self._possible_attacks_per_voice
+        harmonic_index_per_beat = self.find_harmonic_index_per_beat(
+            self._duration, self._attack_voice_pairs
+        )
+
+        return harmonies, self._possible_attacks_per_voice, harmonic_index_per_beat
 
 
 class FreeStyleCP(Counterpoint):
-    # TODO(Add possibility to use dissonant pitch interpolation)
-
     def __init__(
         self,
         harmonies: tuple,
@@ -1101,6 +1108,8 @@ class FreeStyleCP(Counterpoint):
             + tuple(mel.TheEmptyPitch for i in harmonies[0][1])
         )
 
+        harmonic_index_per_beat = []
+
         while True:
             if not attack_voice_pairs:
                 break
@@ -1115,8 +1124,6 @@ class FreeStyleCP(Counterpoint):
                 self._harmonic_network[harmonies[-1]][combination]
                 for combination in possible_combinations
             )
-
-            harmonic_index_per_bar = []
 
             if any(solutions_per_combination):
 
@@ -1195,7 +1202,7 @@ class FreeStyleCP(Counterpoint):
                             for vox_idx in used_voices:
                                 attack_positions_per_voice[vox_idx].append(position)
 
-                            harmonic_index_per_bar.append(position)
+                            harmonic_index_per_beat.append(position)
 
                             for pitch in choosen_harmony[0].blueprint:
                                 used_pitches_counter.update({pitch: 1})
@@ -1213,8 +1220,20 @@ class FreeStyleCP(Counterpoint):
             for attacks in attack_positions_per_voice
         )
 
-        harmonic_index_per_bar = tuple(
-            b - a for a, b in zip(harmonic_index_per_bar, harmonic_index_per_bar[1:])
+        harmonic_index_per_beat.append(self._duration)
+
+        if len(harmonic_index_per_beat) > 1:
+            harmonic_index_per_beat = tuple(
+                b - a
+                for a, b in zip(harmonic_index_per_beat, harmonic_index_per_beat[1:])
+            )
+
+        harmonic_index_per_beat = functools.reduce(
+            operator.add,
+            tuple(
+                tuple(idx for i in range(duration))
+                for idx, duration in enumerate(harmonic_index_per_beat)
+            ),
         )
 
-        return tuple(harmonies), rhythm_per_voice
+        return tuple(harmonies), rhythm_per_voice, harmonic_index_per_beat
