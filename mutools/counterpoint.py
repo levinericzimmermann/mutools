@@ -1001,6 +1001,8 @@ class RhythmicCP(Counterpoint):
 
 
 class FreeStyleCP(Counterpoint):
+    available_decision_types = ("activity", "random")
+
     def __init__(
         self,
         harmonies: tuple,
@@ -1017,6 +1019,7 @@ class FreeStyleCP(Counterpoint):
         energy_per_voice: tuple = None,
         silence_decider_per_voice: tuple = None,
         weight_range: tuple = (1, 10),
+        decision_type: str = "activity",
     ) -> None:
         super().__init__(
             harmonies,
@@ -1029,6 +1032,14 @@ class FreeStyleCP(Counterpoint):
             add_dissonant_pitches_to_nth_voice,
         )
 
+        try:
+            assert decision_type in self.available_decision_types
+        except AssertionError:
+            msg = "Unknown decision_type '{}'. The only available types are '{}'.".format(
+                decision_type, self.available_decision_types
+            )
+            raise NotImplementedError(msg)
+
         if energy_per_voice is None:
             energy_per_voice = tuple(10 for i in range(self._n_voices))
 
@@ -1038,11 +1049,24 @@ class FreeStyleCP(Counterpoint):
             )
 
         self._silence_decider_per_voice = silence_decider_per_voice
-        self._add_activity_al = activity_levels.ActivityLevel()
-        self._al_per_voice = tuple(infit.ActivityLevel(lv) for lv in energy_per_voice)
-        self._energy_lv_per_beat = self.convert_weights_per_beat2activity_lv_per_beat(
-            self._weights_per_beat, weight_range
-        )
+        self._decision_type = decision_type
+
+        if decision_type == self.available_decision_types[0]:
+            self._add_activity_al = activity_levels.ActivityLevel()
+            self._energy_lv_per_beat = self.convert_weights_per_beat2activity_lv_per_beat(
+                self._weights_per_beat, weight_range
+            )
+            self._al_per_voice = tuple(
+                infit.ActivityLevel(lv) for lv in energy_per_voice
+            )
+
+        elif decision_type == self.available_decision_types[1]:
+            import random
+
+            random.seed(100)
+            self._random_unit = random
+            self._border_per_voice = tuple(lv / 10 for lv in energy_per_voice)
+            self._weights_per_beat = tools.scale(self._weights_per_beat, *weight_range)
 
     @staticmethod
     def convert_weights_per_beat2activity_lv_per_beat(
@@ -1086,6 +1110,49 @@ class FreeStyleCP(Counterpoint):
 
         return sorted_solutions
 
+    def __choose_harmony(
+        self,
+        possible_solutions: tuple,
+        voices_would_become_tone: tuple,
+        used_pitches_counter: dict,
+    ) -> tuple:
+        n_voices = len(voices_would_become_tone)
+
+        # use those solutions that are most similar to the expected
+        # result (that indicates which voices shall turn silent and which
+        # voices shall get a new pitch in the next harmony)
+        difference_per_solution = []
+        for solution in possible_solutions:
+            difference = sum(
+                0 if a == b else 1
+                for a, b in zip(voices_would_become_tone, solution[1])
+            )
+            difference_per_solution.append(difference)
+
+        min_difference = min(difference_per_solution)
+
+        if min_difference <= n_voices - 1:
+
+            choosen_solutions = tuple(
+                solution
+                for difference, solution in zip(
+                    difference_per_solution, possible_solutions
+                )
+                if difference == min_difference
+            )
+
+            # only use the harmonies and throw away the tuple that
+            # indicates if in the new harmony the changed voices will
+            # be either silent or get a new pitch
+            choosen_solutions = tuple(solution[0] for solution in choosen_solutions)
+
+            solutions = self.__sort_solutions_by_least_often_used_pitches(
+                choosen_solutions, used_pitches_counter
+            )
+            return solutions[0]
+
+        return tuple([])
+
     def _find_harmonic_frame(self, primes: tuple) -> tuple:
         """Return tuple that contains two subtuples.
 
@@ -1127,11 +1194,28 @@ class FreeStyleCP(Counterpoint):
 
             if any(solutions_per_combination):
 
-                if self._add_activity_al(self._energy_lv_per_beat[position]):
-
-                    nth_voice_shall_be_activated = tuple(
-                        next(self._al_per_voice[vox_idx]) for vox_idx in voices
+                if self._decision_type == self.available_decision_types[0]:
+                    activity_test = self._add_activity_al(
+                        self._energy_lv_per_beat[position]
                     )
+
+                elif self._decision_type == self.available_decision_types[1]:
+                    activity_test = (
+                        self._random_unit.random() < self._weights_per_beat[position]
+                    )
+
+                if activity_test:
+
+                    if self._decision_type == self.available_decision_types[0]:
+                        nth_voice_shall_be_activated = tuple(
+                            next(self._al_per_voice[vox_idx]) for vox_idx in voices
+                        )
+
+                    elif self._decision_type == self.available_decision_types[1]:
+                        nth_voice_shall_be_activated = tuple(
+                            self._random_unit.random() < self._border_per_voice[vox_idx]
+                            for vox_idx in voices
+                        )
 
                     if any(nth_voice_shall_be_activated):
                         used_voices = tuple(
@@ -1163,41 +1247,13 @@ class FreeStyleCP(Counterpoint):
                             not boolean for boolean in voice_would_become_silent
                         )
 
-                        # use those solutions that are most similar to the expected
-                        # result (that indicates which voices shall turn silent and which
-                        # voices shall get a new pitch in the next harmony)
-                        difference_per_solution = []
-                        for solution in possible_solutions:
-                            difference = sum(
-                                0 if a == b else 1
-                                for a, b in zip(voices_would_become_tone, solution[1])
-                            )
-                            difference_per_solution.append(difference)
+                        choosen_harmony = self.__choose_harmony(
+                            possible_solutions,
+                            voices_would_become_tone,
+                            used_pitches_counter,
+                        )
 
-                        min_difference = min(difference_per_solution)
-
-                        if min_difference <= n_voices - 1:
-
-                            choosen_solutions = tuple(
-                                solution
-                                for difference, solution in zip(
-                                    difference_per_solution, possible_solutions
-                                )
-                                if difference == min_difference
-                            )
-
-                            # only use the harmonies and throw away the tuple that
-                            # indicates if in the new harmony the changed voices will
-                            # be either silent or get a new pitch
-                            choosen_solutions = tuple(
-                                solution[0] for solution in choosen_solutions
-                            )
-
-                            solutions = self.__sort_solutions_by_least_often_used_pitches(
-                                choosen_solutions, used_pitches_counter
-                            )
-                            choosen_harmony = solutions[0]
-
+                        if choosen_harmony:
                             harmonies.append(choosen_harmony)
                             for vox_idx in used_voices:
                                 attack_positions_per_voice[vox_idx].append(position)
