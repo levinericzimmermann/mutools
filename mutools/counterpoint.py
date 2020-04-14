@@ -415,6 +415,10 @@ class Counterpoint(abc.ABC):
         harmonic_frame_converted: tuple,
         harmonic_index_per_beat: tuple,
     ) -> tuple:
+        # TODO(split functions in subfunctions, add better documentation and explanantion
+        # whats actually happening)
+        # TODO(add possibility to ignore harmonic borders in transitions and adding
+        # tones anywhere between two consonant pitches)
 
         if self._add_dissonant_pitches_to_nth_voice[voice_idx]:
 
@@ -1020,6 +1024,7 @@ class FreeStyleCP(Counterpoint):
         silence_decider_per_voice: tuple = None,
         weight_range: tuple = (1, 10),
         decision_type: str = "activity",
+        random_seed: int = 100,
     ) -> None:
         super().__init__(
             harmonies,
@@ -1063,7 +1068,7 @@ class FreeStyleCP(Counterpoint):
         elif decision_type == self.available_decision_types[1]:
             import random
 
-            random.seed(100)
+            random.seed(random_seed)
             self._random_unit = random
             self._border_per_voice = tuple(lv / 10 for lv in energy_per_voice)
             self._weights_per_beat = tools.scale(self._weights_per_beat, *weight_range)
@@ -1159,6 +1164,8 @@ class FreeStyleCP(Counterpoint):
         The first tuple contains one harmony for each change of pitch.
         The second tuple contains rhythms per voice.
         """
+
+        # TODO(add better documentation what is actually happening)
 
         if self._start_harmony:
             harmonies = [self._start_harmony]
