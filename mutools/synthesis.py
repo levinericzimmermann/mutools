@@ -96,7 +96,7 @@ class SilenceEngine(SoundEngine):
 
 class PyoEngine(SoundEngine):
     def __init__(self):
-        self.__server = pyo.Server(sr=96000, audio="offline", nchnls=1).boot()
+        self._server = pyo.Server(sr=96000, audio="offline", nchnls=1).boot()
 
     @abc.abstractproperty
     def duration(self) -> float:
@@ -104,7 +104,7 @@ class PyoEngine(SoundEngine):
 
     @property
     def server(self) -> pyo.Server:
-        return self.__server
+        return self._server
 
     @abc.abstractmethod
     def render(self, name: str) -> None:
