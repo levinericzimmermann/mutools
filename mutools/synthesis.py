@@ -2,6 +2,7 @@ import abc
 import os
 import sox
 import subprocess
+import uuid
 
 import pyo64 as pyo
 
@@ -38,65 +39,41 @@ class BasedCsoundEngine(SoundEngine):
     def sco(self) -> str:
         raise NotImplementedError
 
-    def render(self, name: str) -> None:
-        orc_name = "{}.orc".format(self.cname)
-        sco_name = "{}.sco".format(self.cname)
+    def render(self, name: str) -> subprocess.Popen:
+        id_number = uuid.uuid4().hex
+        orc_name = "{}_{}.orc".format(self.cname, id_number)
+        sco_name = "{}_{}.sco".format(self.cname, id_number)
 
-        orc = self.orc
-        sco = self.sco
-
-        for fname, data in ((orc_name, orc), (sco_name, sco)):
+        for fname, data in ((orc_name, self.orc), (sco_name, self.sco)):
             with open(fname, "w") as f:
                 f.write(data)
 
-        process = csound.render_csound(
+        return csound.render_csound(
             "{}.wav".format(name), orc_name, sco_name, print_output=self.print_output
         )
 
-        process.wait()
 
-        os.remove(orc_name)
-        os.remove(sco_name)
-
-
-class SilenceEngine(SoundEngine):
+class SilenceEngine(BasedCsoundEngine):
     def __init__(self, duration: float) -> None:
         self.__duration = duration
+
+    @property
+    def cname(self) -> str:
+        return ".silence"
 
     @property
     def duration(self) -> float:
         return self.__duration
 
     @property
-    def __orc(self) -> str:
+    def orc(self) -> str:
         lines = (r"0dbfs=1", r"instr 1", r"asig poscil 0, 100", r"out asig", r"endin")
         return "\n".join(lines)
 
     @property
-    def __sco(self) -> str:
+    def sco(self) -> str:
         lines = (r"i1 0 {}".format(self.duration),)
         return "\n".join(lines)
-
-    def render(self, name: str) -> None:
-        orc = self.__orc
-        sco = self.__sco
-
-        file_name = "{}.wav".format(name)
-        orc_name = ".silence.orc"
-        sco_name = ".silence.sco"
-
-        with open(orc_name, "w") as f:
-            f.write(orc)
-
-        with open(sco_name, "w") as f:
-            f.write(sco)
-
-        process = csound.render_csound(file_name, orc_name, sco_name)
-
-        process.wait()
-
-        os.remove(orc_name)
-        os.remove(sco_name)
 
 
 class PyoEngine(SoundEngine):
@@ -232,7 +209,6 @@ class PyteqEngine(SoundEngine):
                 seq.append(old.Rest(dur))
 
         pt = midiplug.Pianoteq(tuple(seq), self.available_midi_notes)
-        # return subprocess
         return pt.export2wav(name, 1, self.preset, self.fxp)
 
 

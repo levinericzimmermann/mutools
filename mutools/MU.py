@@ -259,21 +259,21 @@ class MU(_NamedObject):
                 msg = "Segment has a too low start value."
                 raise ValueError(msg)
 
-        orc_name = ".concatenate.orc"
+        orc_name = ".concatenate"
         sco_name = ".concatenate"
 
-        with open(orc_name, "w") as f:
-            f.write(self.__make_sampler_orc(n_channels=1))
-
         processes = []
-        scores = []
 
         print("CONCATENATING TRACKS")
 
         with progressbar.ProgressBar(max_value=len(self.orchestration)) as bar:
             for track_idx, track in enumerate(self.orchestration):
 
+                local_orc_name = "{}_{}.orc".format(orc_name, track_idx)
                 local_sco_name = "{}_{}.sco".format(sco_name, track_idx)
+
+                with open(local_orc_name, "w") as f:
+                    f.write(self.__make_sampler_orc(n_channels=1))
 
                 relevant_data = []  # start, duration, path
 
@@ -308,16 +308,14 @@ class MU(_NamedObject):
                 sf_name = "{}/{}/{}.wav".format(
                     self.name, self.__concatenated_path, track.name
                 )
-                processes.append(csound.render_csound(sf_name, orc_name, local_sco_name))
+                processes.append(
+                    csound.render_csound(sf_name, local_orc_name, local_sco_name)
+                )
 
-                scores.append(local_sco_name)
                 bar.update(track_idx)
 
-        for score, process in zip(scores, processes):
+        for process in processes:
             process.wait()
-            os.remove(score)
-
-        os.remove(orc_name)
 
     def render(self) -> None:
         processes = []
@@ -383,9 +381,4 @@ class MU(_NamedObject):
         with open(sco_name, "w") as f:
             f.write(sco)
 
-        process = csound.render_csound(sf_name, orc_name, sco_name)
-
-        process.wait()
-
-        os.remove(orc_name)
-        os.remove(sco_name)
+        csound.render_csound(sf_name, orc_name, sco_name).wait()
