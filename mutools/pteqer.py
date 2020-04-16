@@ -10,6 +10,8 @@ from mu.midiplug import midiplug
 
 from mu.mel import ji
 
+from mu.rhy import binr
+
 
 class AttributeMaker(object):
     """Class that generates different attributes for pianoteq render."""
@@ -63,7 +65,7 @@ class AttributeMaker(object):
             metricity_per_tone_per_voice.append(
                 tuple(
                     metricity_per_beat[int(position)]
-                    for position in vox.delay.convert2absolute()
+                    for position in binr.Compound(vox.delay).convert2absolute()
                 )
             )
 

@@ -5,7 +5,7 @@ import subprocess
 
 def render_csound(
     file_name: str, orc_name: str, sco_name: str, print_output: bool = False
-) -> None:
+) -> subprocess.Popen:
     cmd = ["csound", "--format=double", "-k 96000", "-r 96000"]
 
     if print_output is False:
@@ -13,4 +13,4 @@ def render_csound(
 
     cmd.extend(["-o {0}".format(file_name), orc_name, sco_name])
 
-    subprocess.call(" ".join(cmd), shell=True)
+    return subprocess.Popen(" ".join(cmd), shell=True)

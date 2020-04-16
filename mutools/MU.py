@@ -1,4 +1,6 @@
 import os
+import subprocess
+import progressbar
 
 from mu.utils import tools
 
@@ -133,13 +135,14 @@ class Segment(_NamedObject, metaclass=_SegmentMeta):
     def __repr__(self) -> str:
         return "Segment({})".format(self.name)
 
-    def render(self, path: str) -> None:
+    def render(self, path: str) -> tuple:
         """Make empty sound file for any track that hasn't been initalized.
 
         If you don't want to lose this functionality, don't forget
             super().render(path)
         as a last line for the render method of inherited classes.
         """
+        processes = []
         duration = self.duration
         for track in self.orchestration:
             data = getattr(self, track.name)
@@ -148,7 +151,9 @@ class Segment(_NamedObject, metaclass=_SegmentMeta):
                 sound_engine = synthesis.SilenceEngine(duration)
             if isinstance(sound_engine, synthesis.PyoEngine):
                 sound_engine = sound_engine.copy()
-            sound_engine.render("{}/{}".format(path, track.name))
+            processes.append(sound_engine.render("{}/{}".format(path, track.name)))
+
+        return tuple(processes)
 
     @property
     def duration(self) -> float:
@@ -255,52 +260,87 @@ class MU(_NamedObject):
                 raise ValueError(msg)
 
         orc_name = ".concatenate.orc"
-        sco_name = ".concatenate.sco"
+        sco_name = ".concatenate"
 
         with open(orc_name, "w") as f:
             f.write(self.__make_sampler_orc(n_channels=1))
 
-        for track in self.orchestration:
-            relevant_data = []  # start, duration, path
+        processes = []
+        scores = []
 
-            is_first_segment = True
+        print("CONCATENATING TRACKS")
 
-            for start_position_of_segment, segment in zip(
-                start_position_per_segment, self.segments
-            ):
-                path = "{}/{}/{}.wav".format(self.name, segment.name, track.name)
-                start_position = (
-                    start_position_of_segment + getattr(segment, track.name)["start"]
+        with progressbar.ProgressBar(max_value=len(self.orchestration)) as bar:
+            for track_idx, track in enumerate(self.orchestration):
+
+                local_sco_name = "{}_{}.sco".format(sco_name, track_idx)
+
+                relevant_data = []  # start, duration, path
+
+                is_first_segment = True
+
+                for start_position_of_segment, segment in zip(
+                    start_position_per_segment, self.segments
+                ):
+                    path = "{}/{}/{}.wav".format(self.name, segment.name, track.name)
+                    start_position = (
+                        start_position_of_segment
+                        + getattr(segment, track.name)["start"]
+                    )
+
+                    if is_first_segment:
+                        start_position += (
+                            added_value_for_start_position_for_first_segment
+                        )
+
+                    duration = getattr(segment, track.name)["duration"] + self.tail
+                    relevant_data.append((start_position, duration, path))
+
+                    is_first_segment = False
+
+                sco = " \n".join(
+                    tuple('i1 {} {} "{}" 1'.format(*d) for d in relevant_data)
                 )
 
-                if is_first_segment:
-                    start_position += added_value_for_start_position_for_first_segment
+                with open(local_sco_name, "w") as f:
+                    f.write(sco)
 
-                duration = getattr(segment, track.name)["duration"] + self.tail
-                relevant_data.append((start_position, duration, path))
+                sf_name = "{}/{}/{}.wav".format(
+                    self.name, self.__concatenated_path, track.name
+                )
+                processes.append(csound.render_csound(sf_name, orc_name, local_sco_name))
 
-                is_first_segment = False
+                scores.append(local_sco_name)
+                bar.update(track_idx)
 
-            sco = " \n".join(tuple('i1 {} {} "{}" 1'.format(*d) for d in relevant_data))
-
-            with open(sco_name, "w") as f:
-                f.write(sco)
-
-            sf_name = "{}/{}/{}.wav".format(
-                self.name, self.__concatenated_path, track.name
-            )
-            csound.render_csound(sf_name, orc_name, sco_name)
-            os.remove(sco_name)
+        for score, process in zip(scores, processes):
+            process.wait()
+            os.remove(score)
 
         os.remove(orc_name)
 
     def render(self) -> None:
-        for segment in self.segments:
-            self.render_segment(segment.name)
+        processes = []
+        n_segments = len(self.segments)
+
+        print("RENDER {} SEGMENTS.".format(n_segments))
+
+        with progressbar.ProgressBar(max_value=n_segments) as bar:
+            for idx, segment in enumerate(self.segments):
+                processes.extend(self.render_segment(segment.name))
+                bar.update(idx)
+
+        print("WAITING FOR ALL SUBPROCESSES TO BE FINISHED.")
+        with progressbar.ProgressBar(max_value=len(processes)) as bar:
+            for idx, process in enumerate(processes):
+                if isinstance(process, subprocess.Popen):
+                    process.wait()
+                bar.update(idx)
+
         self.concatenate()
 
     def render_segment(self, segment_name: str) -> None:
-        self.__segments_by_name[segment_name].render(
+        return self.__segments_by_name[segment_name].render(
             "{}/{}".format(self.name, segment_name)
         )
 
@@ -312,6 +352,7 @@ class MU(_NamedObject):
         if do_render:
             self.render()
 
+        print("START STEREO MIXDOWN")
         sf_name = "{}/stereo_mixdown.wav".format(self.name)
         orc_name = ".mixdown.orc"
         sco_name = ".mixdown.sco"
@@ -342,7 +383,9 @@ class MU(_NamedObject):
         with open(sco_name, "w") as f:
             f.write(sco)
 
-        csound.render_csound(sf_name, orc_name, sco_name)
+        process = csound.render_csound(sf_name, orc_name, sco_name)
+
+        process.wait()
 
         os.remove(orc_name)
         os.remove(sco_name)

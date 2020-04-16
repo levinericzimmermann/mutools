@@ -1,6 +1,7 @@
 import abc
 import os
 import sox
+import subprocess
 
 import pyo64 as pyo
 
@@ -48,9 +49,11 @@ class BasedCsoundEngine(SoundEngine):
             with open(fname, "w") as f:
                 f.write(data)
 
-        csound.render_csound(
+        process = csound.render_csound(
             "{}.wav".format(name), orc_name, sco_name, print_output=self.print_output
         )
+
+        process.wait()
 
         os.remove(orc_name)
         os.remove(sco_name)
@@ -88,7 +91,9 @@ class SilenceEngine(SoundEngine):
         with open(sco_name, "w") as f:
             f.write(sco)
 
-        csound.render_csound(file_name, orc_name, sco_name)
+        process = csound.render_csound(file_name, orc_name, sco_name)
+
+        process.wait()
 
         os.remove(orc_name)
         os.remove(sco_name)
@@ -200,7 +205,7 @@ class PyteqEngine(SoundEngine):
     def available_midi_notes(self) -> tuple:
         return self.__available_midi_notes
 
-    def render(self, name: str, cadence: old.JICadence) -> None:
+    def render(self, name: str, cadence: old.Cadence) -> subprocess.Popen:
         seq = []
         for chord in cadence:
             dur = float(chord.delay)
@@ -227,7 +232,8 @@ class PyteqEngine(SoundEngine):
                 seq.append(old.Rest(dur))
 
         pt = midiplug.Pianoteq(tuple(seq), self.available_midi_notes)
-        pt.export2wav(name, 1, self.preset, self.fxp)
+        # return subprocess
+        return pt.export2wav(name, 1, self.preset, self.fxp)
 
 
 class CsoundEngine(SoundEngine):

@@ -156,7 +156,9 @@ def mk_harmonics_melodies(
     or primes.
     """
     poly_per_interlocking = []
-    origin_melodies = tuple(m.discard_rests().tie() for m in origin_melodies)
+    origin_melodies = tuple(
+        m.discard_rests().tie() for m in origin_melodies
+    )
     for comb in itertools.combinations(origin_melodies, 2):
         cadence = old.Polyphon(comb).chordify(add_longer=True)
         harmonics_per_pitch = tuple(
