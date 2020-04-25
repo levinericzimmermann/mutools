@@ -26,6 +26,7 @@ class SoundEngine(abc.ABC):
 
 class BasedCsoundEngine(SoundEngine):
     print_output = False
+    remove_files = True
 
     @abc.abstractmethod
     def cname(self) -> str:
@@ -49,7 +50,11 @@ class BasedCsoundEngine(SoundEngine):
                 f.write(data)
 
         return csound.render_csound(
-            "{}.wav".format(name), orc_name, sco_name, print_output=self.print_output
+            "{}.wav".format(name),
+            orc_name,
+            sco_name,
+            print_output=self.print_output,
+            remove_files=self.remove_files,
         )
 
 
