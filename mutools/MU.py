@@ -1,13 +1,3 @@
-import os
-import subprocess
-import progressbar
-
-from mu.utils import tools
-
-from mutools import csound
-from mutools import synthesis
-
-
 """MU aims helping to organise acousmatic compositions.
 
 One MU.MU object shall represent one piece. It is composed of different
@@ -24,6 +14,19 @@ Then single tracks can be rendered through MUs render method.
 For a better composing workflow, a stereo mixdown can be created
 with MUs 'stereo_mixdown' method.
 """
+
+# TODO(Add MU objects for score generation [similar organisiation of segments that get
+# glued to bigger structures])
+
+
+import os
+import subprocess
+import progressbar
+
+from mu.utils import tools
+
+from mutools import csound
+from mutools import synthesis
 
 
 def _check_for_double_names(iterable: tuple) -> None:

@@ -1,4 +1,4 @@
-"""This module contains different algorithms that model counterpoint-like structures."""
+"""This module contains algorithms that model counterpoint-like structures."""
 
 import abc
 import bisect
@@ -16,27 +16,50 @@ from mu.utils import activity_levels
 from mu.utils import infit
 from mu.utils import tools
 
+from mu.sco import old
+
 from . import ambitus
 from . import counterpoint_constraints as constraints
 
 
-class Counterpoint(abc.ABC):
-    """Abstract superclass for modelling counterpoint.
+# TODO(add option for allocating individual pitches of each voice to allowed octaves
+# instead of having a general ambitus for every voice [that's necessary if you want to
+# apply those Counterpoint algorithms to instruments who can't play every pitch in
+# every register as it is usual for string instruments playing harmonics])
 
-    Arguments for Counterpoint classes:
+# TODO(for Counterpoint algorithms in the future, please differentiate between different
+# manifestations of the same harmony [e.g. only with a rest / only with one different
+# pitch] and real changes of harmony. Then one harmony may be defined by all pitches that
+# it could contain and by all dissonant pitches that could potentially be added. In this
+# case voices would also have to get defined not only by allowed_metrical_points but also
+# by allowed pitches (+ their allowed octaves). In the current implementation this kind
+# of analysing how many 'real' harmonic changes happens could only be checked in the class
+# RhythmicCP through added constraints. Furthermore BlueprintHarmony may better be
+# abstracted outside of the Countepoint module and it may be better if the Counterpoint
+# itself already gets real pitch objects (perhaps ji.JIPitch). This module could still be
+# helpful for implementing those new kind of algorithms though.)
+
+# TODO(for the generation of additional dissonant pitches, also think about 'Vorhalt' and
+# not only about transitional pitches.)
+
+
+class Counterpoint(abc.ABC):
+    """Abstract superclass for counterpoint models.
+
+    General arguments for Counterpoint classes:
 
         MANDATORY:
 
-        (1) a tuple containing harmonies, where every harmony is composed of:
+        (1) harmonies: a tuple containing harmonies, where each harmony is composed of:
             [a] BlueprintHarmony (the actual harmony)
             [b] voices to skip (voices that are silent)
             [c] BlueprintHarmony (optional dissonant pitches per harmony)
                 => (HarmonyItself, Voices2skip, AdditionalDissonantPitches)
             - every harmony has to contain the same amount of pitches!
 
-        (2) rhythm per voice
+        (2) possible_attacks_per_voice
             - there has to be as many elements as there are voices
-            - use a binr.Compound object for each input
+            - use a mu.rhy.binr.Compound object for each input
             - every element has to have equal size (sum of durations)
             - depending on the particular subclass this either indicates the
               possible points where a new tone could be played or each rhythm is
@@ -49,25 +72,14 @@ class Counterpoint(abc.ABC):
             - has to have equal size like the rhythms per voice
             - a list containing floating point numbers 0 <= x <= 1 (percentage)
 
-        (4) constraints for harmonic resolution
-            - functions for the harmonic frame algorithm
-            - each function should have as an input:
-                * counterpoint: the current counterpoint object
-                * harmonies: abstract (tuple)
-                * harmonies: concrete (tuple)
-                * rhythmic weight (float)
-                * duration of the current harmony (int)
-                * harmony counter (int)
-                * how many harmonies have to be found (int)
+        (4) constraints for dissonant added pitches
 
-        (5) constraints for dissonant added pitches
+        (5) step definition in cents. default: (70, 270)
 
-        (6) step definition in cents. default: (70, 270)
-
-        (7) ambitus_maker. default: make symmetrical ambitus with inner point 1/1,
+        (6) ambitus_maker. default: make symmetrical ambitus with inner point 1/1,
             range 3/1 and overlap 5/4
 
-        (8) start harmony: the first harmony (abstract form) -> if a solution can be
+        (7) start harmony: the first harmony (abstract form) -> if a solution can be
             found with this harmony
     """
 
@@ -344,10 +356,12 @@ class Counterpoint(abc.ABC):
 
     @abc.abstractmethod
     def _find_harmonic_frame(self, primes: tuple) -> tuple:
-        """Return tuple that contains two subtuples.
+        """Return tuple that contains three subtuples.
 
         The first tuple contains one harmony for each change of pitch.
         The second tuple contains rhythms per voice.
+        The third tuple contain as many elements as there are beats. Elements are integer
+        that indicate the index of the harmony that's valid on the particular beat.
         """
 
         raise NotImplementedError
@@ -417,6 +431,7 @@ class Counterpoint(abc.ABC):
     ) -> tuple:
         # TODO(split functions in subfunctions, add better documentation and explanantion
         # whats actually happening)
+
         # TODO(add possibility to ignore harmonic borders in transitions and adding
         # tones anywhere between two consonant pitches)
 
@@ -662,34 +677,20 @@ class Counterpoint(abc.ABC):
 
 
 class RhythmicCP(Counterpoint):
-    """Class to model counterpoint that is based on a backtracking algorithm.
+    """Class to model counterpoint that is based on particular input rhythms per voice.
 
-        MANDATORY:
+    This model uses a backtracking algorithm for finding a harmonic frame.
 
-        (1) a tuple containing harmonies, where every harmony is composed of:
-            [a] BlueprintHarmony (the actual harmony)
-            [b] voices to skip (voices that are silent)
-            [c] BlueprintHarmony (optional dissonant pitches per harmony)
-                => (HarmonyItself, Voices2skip, AdditionalDissonantPitches)
-            - every harmony has to contain the same amount of pitches!
+    For more information regarding general arguments that are necessary for the
+    initalization of a Counterpoint object please read the docs of the Counterpoint class.
 
-        (2) rhythm per voice
-            - there has to be as many elements as there are voices
-            - use a binr.Compound object for each input
-            - every element has to have equal size (sum of durations)
-            - depending on the particular subclass this either indicates the
-              possible points where a new tone could be played or each rhythm is
-              equal with the resulting rhythm of each voice
+    Additionally the RhythmicCP class has those optional arguments:
 
-
-        OPTIONAL:
-
-        (3) weight per beat
-            - has to have equal size like the rhythms per voice
-            - a list containing floating point numbers 1 >= x >= 0 (percentage)
-
-        (4) constraints for harmonic resolution
+        constraints_harmonic_resolution: tuple
             - functions for the harmonic frame algorithm
+            - each function has to return a boolean value
+            - those functions are constrains for the backtracking algorithm in harmonic
+            frame finding method
             - each function should have as an input:
                 * counterpoint: the current counterpoint object
                 * harmonies: abstract (tuple)
@@ -698,16 +699,6 @@ class RhythmicCP(Counterpoint):
                 * duration of the current harmony (int)
                 * harmony counter (int)
                 * how many harmonies have to be found (int)
-
-        (5) constraints for dissonant added pitches
-
-        (6) step definition in cents. default: (70, 270)
-
-        (7) ambitus_maker. default: make symmetrical ambitus with inner point 1/1,
-            range 3/1 and overlap 5/4
-
-        (8) start harmony: the first harmony (abstract form) -> if a solution can be
-            found with this harmony
     """
 
     def __init__(
@@ -935,10 +926,12 @@ class RhythmicCP(Counterpoint):
         return solutions_for_particular_pitch_change
 
     def _find_harmonic_frame(self, primes: tuple) -> tuple:
-        """Return tuple that contains two subtuples.
+        """Return tuple that contains three subtuples.
 
         The first tuple contains one harmony for each change of pitch.
         The second tuple contains rhythms per voice.
+        The third tuple contain as many elements as there are beats. Elements are integer
+        that indicate the index of the harmony that's valid on the particular beat.
         """
 
         possible_solutions_per_item = [
@@ -1005,25 +998,74 @@ class RhythmicCP(Counterpoint):
 
 
 class FreeStyleCP(Counterpoint):
+    """Class to model counterpoint that generate rhythms based on probability models.
+
+    FreeStyleCP offers two different models:
+        - 'activity'
+        - 'random'
+
+    With 'activity' the algorithm uses Activity Levels for making decisions as described
+    by composer Michael Edwards. Activity Levels are a deterministic method to make
+    decisions. They can range from 0 to 10 where a higher number indicates a higher
+    likelihood for a particular event.
+
+    With 'random' the algorithm uses pseudo-random generator for making decisions. The
+    random function generates numbers from 0 to 1 where a higher number indicates a
+    higher likelihood for a particular event.
+
+    For more information regarding general arguments that are necessary for the
+    initalization of a Counterpoint object please read the docs of the Counterpoint class.
+
+    'weights_per_beat' is a mandatory argument for the FreeStyleCP class.
+
+    Additionally the FreeStyleCP class has those optional arguments:
+
+        decision_type: str
+            A string refering to which probability model shall be used. Could either be
+            'activity' or 'random'. Default is 'activity'.
+
+        energy_per_voice: tuple
+            A tuple that contains as many elements as there are voices. The energy of a
+            voice equals the likelihood whether a voice will trigger a new event. Energy
+            values can range from 0 to 10. Default is 10 for each voice.
+
+        silence_decider_per_voice: tuple
+            A tuple that contains as many elements as there are voices. Each
+            silence_decider is expected to be an infinite iterable (an object that could
+            indefinitely be called by the 'next' function). With each call the iterable
+            is expected to return a number thats either 0 or 1 where 1 indicates silence
+            (rest) and 0 Tone.
+
+        weight_range: tuple
+            A tuple containing two unequal numbers for scaling weights_per_beat.
+            For decision_type = 'activity' those numbers have to be in between 0 to 10.
+            For decision_type = 'random' those numbers have to be in between 0 to 1.
+            In case the first number is higher than the second number, beats with a lower
+            metricity will be prefered, resulting in a rhythm with many syncopation.
+
+        random_seed: int
+            This argument only has an effect in case the decision_type is 'random'. Set
+            the seed of the pseudo random generator to this number. Default value is 100.
+    """
+
     available_decision_types = ("activity", "random")
 
     def __init__(
         self,
         harmonies: tuple,
         possible_attacks_per_voice: tuple,
-        weights_per_beat: tuple = None,
+        weights_per_beat: tuple,
         constraints_added_pitches: tuple = tuple([]),
         stepsize: tuple = (70, 270),
         ambitus_maker: ambitus.AmbitusMaker = ambitus.SymmetricalRanges(
             ji.r(1, 1), ji.r(3, 1), ji.r(5, 4)
         ),
         start_harmony: tuple = None,
-        use_sorting_algorithm: bool = True,
         add_dissonant_pitches_to_nth_voice: tuple = None,
+        decision_type: str = "activity",
         energy_per_voice: tuple = None,
         silence_decider_per_voice: tuple = None,
         weight_range: tuple = (1, 10),
-        decision_type: str = "activity",
         random_seed: int = 100,
     ) -> None:
         super().__init__(
@@ -1159,13 +1201,15 @@ class FreeStyleCP(Counterpoint):
         return tuple([])
 
     def _find_harmonic_frame(self, primes: tuple) -> tuple:
-        """Return tuple that contains two subtuples.
+        """Return tuple that contains three subtuples.
 
         The first tuple contains one harmony for each change of pitch.
         The second tuple contains rhythms per voice.
+        The third tuple contain as many elements as there are beats. Elements are integer
+        that indicate the index of the harmony that's valid on the particular beat.
         """
 
-        # TODO(add better documentation what is actually happening)
+        # TODO(add better documentation about what is actually happening)
 
         if self._start_harmony:
             harmonies = [self._start_harmony]
@@ -1300,3 +1344,64 @@ class FreeStyleCP(Counterpoint):
         )
 
         return tuple(harmonies), rhythm_per_voice, harmonic_index_per_beat
+
+
+class MelodicCP(Counterpoint):
+    # TODO(implement Melodic counterpoint. Maybe add something like an action/sound ratio
+    # for each added voice (assert action * 0.5 >= sound).)
+
+    def __init__(
+        self,
+        melody: old.Melody,
+        harmonies: tuple,
+        possible_attacks_per_voice: tuple,
+        weights_per_beat: tuple = None,
+        constraints_added_pitches: tuple = tuple([]),
+        stepsize: tuple = (70, 270),
+        ambitus_maker: ambitus.AmbitusMaker = ambitus.SymmetricalRanges(
+            ji.r(1, 1), ji.r(3, 1), ji.r(5, 4)
+        ),
+        start_harmony: tuple = None,
+        add_dissonant_pitches_to_nth_voice: tuple = None,
+    ) -> None:
+        try:
+            assert melody.duration == len(weights_per_beat)
+        except AssertionError:
+            msg = "There has to be as many weights per beat as "
+            msg += "the duration of the melody."
+            raise ValueError(msg)
+
+        try:
+            assert melody.duration == possible_attacks_per_voice[0].beats
+        except AssertionError:
+            msg = "Rhythms in 'possible_attacks_per_voice' has to be as long as the "
+            msg += "duration of the melody."
+            raise ValueError(msg)
+
+        self._melody = melody
+
+        super().__init__(
+            harmonies,
+            possible_attacks_per_voice,
+            weights_per_beat,
+            constraints_added_pitches,
+            stepsize,
+            ambitus_maker,
+            start_harmony,
+            add_dissonant_pitches_to_nth_voice,
+        )
+
+    def _find_harmonic_frame(self, primes: tuple) -> tuple:
+        """Return tuple that contains three subtuples.
+
+        The first tuple contains one harmony for each change of pitch.
+        The second tuple contains rhythms per voice.
+        The third tuple contain as many elements as there are beats. Elements are integer
+        that indicate the index of the harmony that's valid on the particular beat.
+        """
+
+        raise NotImplementedError()
+
+        rhythm_per_voice = [self._melody.delay]
+
+        return rhythm_per_voice
