@@ -13,7 +13,6 @@ from mu.mel import mel
 from mu.rhy import binr
 
 from mu.utils import activity_levels
-from mu.utils import infit
 from mu.utils import tools
 
 from mu.sco import old
@@ -1029,23 +1028,23 @@ class FreeStyleCP(Counterpoint):
             voice equals the likelihood whether a voice will trigger a new event. Energy
             values can range from 0 to 10. Default is 10 for each voice.
 
-        silence_decider_per_voice: tuple
-            A tuple that contains as many elements as there are voices. Each
-            silence_decider is expected to be an infinite iterable (an object that could
-            indefinitely be called by the 'next' function). With each call the iterable
-            is expected to return a number thats either 0 or 1 where 1 indicates silence
-            (rest) and 0 Tone.
+    silence_decider_per_voice: tuple
+        A tuple that contains as many elements as there are voices. Each
+        silence_decider is expected to be an infinite iterable (an object that could
+        indefinitely be called by the 'next' function). With each call the iterable
+        is expected to return a number thats either 0 or 1 where 1 indicates silence
+        (rest) and 0 Tone.
 
-        weight_range: tuple
-            A tuple containing two unequal numbers for scaling weights_per_beat.
-            For decision_type = 'activity' those numbers have to be in between 0 to 10.
-            For decision_type = 'random' those numbers have to be in between 0 to 1.
-            In case the first number is higher than the second number, beats with a lower
-            metricity will be prefered, resulting in a rhythm with many syncopation.
+    weight_range: tuple
+        A tuple containing two unequal numbers for scaling weights_per_beat.
+        For decision_type = 'activity' those numbers have to be in between 0 to 10.
+        For decision_type = 'random' those numbers have to be in between 0 to 1.
+        In case the first number is higher than the second number, beats with a lower
+        metricity will be prefered, resulting in a rhythm with many syncopation.
 
-        random_seed: int
-            This argument only has an effect in case the decision_type is 'random'. Set
-            the seed of the pseudo random generator to this number. Default value is 100.
+    random_seed: int
+        This argument only has an effect in case the decision_type is 'random'. Set
+        the seed of the pseudo random generator to this number. Default value is 100.
     """
 
     available_decision_types = ("activity", "random")
@@ -1103,9 +1102,7 @@ class FreeStyleCP(Counterpoint):
             self._energy_lv_per_beat = self.convert_weights_per_beat2activity_lv_per_beat(
                 self._weights_per_beat, weight_range
             )
-            self._al_per_voice = tuple(
-                infit.ActivityLevel(lv) for lv in energy_per_voice
-            )
+            self._al_per_voice = energy_per_voice
 
         elif decision_type == self.available_decision_types[1]:
             import random
@@ -1246,77 +1243,78 @@ class FreeStyleCP(Counterpoint):
             if any(solutions_per_combination):
 
                 if self._decision_type == self.available_decision_types[0]:
-                    activity_test = self._add_activity_al(
-                        self._energy_lv_per_beat[position]
+                    nth_voice_shall_be_activated = tuple(
+                        self._add_activity_al(
+                            (
+                                self._energy_lv_per_beat[position]
+                                + self._al_per_voice[vox_idx]
+                            )
+                            // 2
+                        )
+                        for vox_idx in voices
                     )
 
                 elif self._decision_type == self.available_decision_types[1]:
-                    activity_test = (
-                        self._random_unit.random() < self._weights_per_beat[position]
+                    weight = self._weights_per_beat[position]
+                    likelihood_per_voice = tuple(
+                        self._border_per_voice[vox_idx] + weight / 2
+                        for vox_idx in voices
+                    )
+                    nth_voice_shall_be_activated = tuple(
+                        self._random_unit.random() < likelihood
+                        for likelihood in likelihood_per_voice
                     )
 
-                if activity_test:
+                if any(nth_voice_shall_be_activated):
 
-                    if self._decision_type == self.available_decision_types[0]:
-                        nth_voice_shall_be_activated = tuple(
-                            next(self._al_per_voice[vox_idx]) for vox_idx in voices
+                    used_voices = tuple(
+                        voices[idx]
+                        for idx, shall_activate in enumerate(
+                            nth_voice_shall_be_activated
                         )
+                        if shall_activate
+                    )
+                    n_voices = len(used_voices)
+                    possible_solutions = solutions_per_combination[
+                        possible_combinations.index(used_voices)
+                    ]
 
-                    elif self._decision_type == self.available_decision_types[1]:
-                        nth_voice_shall_be_activated = tuple(
-                            self._random_unit.random() < self._border_per_voice[vox_idx]
-                            for vox_idx in voices
+                    could_become_silent = self.__detect_if_voices_could_become_silent(
+                        possible_solutions, n_voices
+                    )
+
+                    voice_would_become_silent = tuple(
+                        next(self._silence_decider_per_voice[vox_idx])
+                        if could_become
+                        else False
+                        for vox_idx, could_become in zip(
+                            used_voices, could_become_silent
                         )
+                    )
 
-                    if any(nth_voice_shall_be_activated):
-                        used_voices = tuple(
-                            voices[idx]
-                            for idx, shall_activate in enumerate(
-                                nth_voice_shall_be_activated
-                            )
-                            if shall_activate
+                    voices_would_become_tone = tuple(
+                        not boolean for boolean in voice_would_become_silent
+                    )
+
+                    choosen_harmony = self.__choose_harmony(
+                        possible_solutions,
+                        voices_would_become_tone,
+                        used_pitches_counter,
+                    )
+
+                    if choosen_harmony:
+                        harmonies.append(choosen_harmony)
+                        for vox_idx in used_voices:
+                            attack_positions_per_voice[vox_idx].append(position)
+
+                        harmonic_index_per_beat.append(position)
+
+                        for pitch in choosen_harmony[0].blueprint:
+                            used_pitches_counter.update({pitch: 1})
+
+                        used_pitches_counter.update(
+                            {mel.TheEmptyPitch: len(choosen_harmony[1])}
                         )
-                        n_voices = len(used_voices)
-                        possible_solutions = solutions_per_combination[
-                            possible_combinations.index(used_voices)
-                        ]
-
-                        could_become_silent = self.__detect_if_voices_could_become_silent(
-                            possible_solutions, n_voices
-                        )
-
-                        voice_would_become_silent = tuple(
-                            next(self._silence_decider_per_voice[vox_idx])
-                            if could_become
-                            else False
-                            for vox_idx, could_become in zip(
-                                used_voices, could_become_silent
-                            )
-                        )
-
-                        voices_would_become_tone = tuple(
-                            not boolean for boolean in voice_would_become_silent
-                        )
-
-                        choosen_harmony = self.__choose_harmony(
-                            possible_solutions,
-                            voices_would_become_tone,
-                            used_pitches_counter,
-                        )
-
-                        if choosen_harmony:
-                            harmonies.append(choosen_harmony)
-                            for vox_idx in used_voices:
-                                attack_positions_per_voice[vox_idx].append(position)
-
-                            harmonic_index_per_beat.append(position)
-
-                            for pitch in choosen_harmony[0].blueprint:
-                                used_pitches_counter.update({pitch: 1})
-
-                            used_pitches_counter.update(
-                                {mel.TheEmptyPitch: len(choosen_harmony[1])}
-                            )
 
             attack_voice_pairs = attack_voice_pairs[1:]
 
@@ -1344,64 +1342,3 @@ class FreeStyleCP(Counterpoint):
         )
 
         return tuple(harmonies), rhythm_per_voice, harmonic_index_per_beat
-
-
-class MelodicCP(Counterpoint):
-    # TODO(implement Melodic counterpoint. Maybe add something like an action/sound ratio
-    # for each added voice (assert action * 0.5 >= sound).)
-
-    def __init__(
-        self,
-        melody: old.Melody,
-        harmonies: tuple,
-        possible_attacks_per_voice: tuple,
-        weights_per_beat: tuple = None,
-        constraints_added_pitches: tuple = tuple([]),
-        stepsize: tuple = (70, 270),
-        ambitus_maker: ambitus.AmbitusMaker = ambitus.SymmetricalRanges(
-            ji.r(1, 1), ji.r(3, 1), ji.r(5, 4)
-        ),
-        start_harmony: tuple = None,
-        add_dissonant_pitches_to_nth_voice: tuple = None,
-    ) -> None:
-        try:
-            assert melody.duration == len(weights_per_beat)
-        except AssertionError:
-            msg = "There has to be as many weights per beat as "
-            msg += "the duration of the melody."
-            raise ValueError(msg)
-
-        try:
-            assert melody.duration == possible_attacks_per_voice[0].beats
-        except AssertionError:
-            msg = "Rhythms in 'possible_attacks_per_voice' has to be as long as the "
-            msg += "duration of the melody."
-            raise ValueError(msg)
-
-        self._melody = melody
-
-        super().__init__(
-            harmonies,
-            possible_attacks_per_voice,
-            weights_per_beat,
-            constraints_added_pitches,
-            stepsize,
-            ambitus_maker,
-            start_harmony,
-            add_dissonant_pitches_to_nth_voice,
-        )
-
-    def _find_harmonic_frame(self, primes: tuple) -> tuple:
-        """Return tuple that contains three subtuples.
-
-        The first tuple contains one harmony for each change of pitch.
-        The second tuple contains rhythms per voice.
-        The third tuple contain as many elements as there are beats. Elements are integer
-        that indicate the index of the harmony that's valid on the particular beat.
-        """
-
-        raise NotImplementedError()
-
-        rhythm_per_voice = [self._melody.delay]
-
-        return rhythm_per_voice

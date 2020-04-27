@@ -28,6 +28,9 @@ class Ambitus(object):
     def find_best_voice_leading(self, pitches: tuple) -> tuple:
         return ji.find_best_voice_leading(pitches, self.__borders)
 
+    def find_all_pitch_variants(self, pitch: ji.JIPitch) -> tuple:
+        return ji.find_all_available_pitches_in_a_specified_range(pitch, *self)
+
 
 class AmbitusMaker(abc.ABC):
     @abc.abstractmethod
