@@ -222,7 +222,7 @@ class Organism(old.Polyphon):
     def _detect_absolute_harmonicity(
         self, pitch: ji.JIPitch, other_pitches: tuple
     ) -> float:
-        if pitch.is_empty:
+        if pitch.is_empty or not other_pitches:
             return 0.5
 
         else:
