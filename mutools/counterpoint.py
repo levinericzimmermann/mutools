@@ -642,8 +642,6 @@ class Counterpoint(abc.ABC):
                         if not used_beats:
                             used_beats = tuple(sorted(found_beats))
 
-                        print("USED_BEATS", tuple(area[0] + b for b in used_beats))
-
                         for pitch, beat in zip(found_pitches, used_beats[1:]):
                             pitches.append(pitch)
                             absolute_beats.append(beat + area[0])
