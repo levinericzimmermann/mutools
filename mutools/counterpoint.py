@@ -15,8 +15,6 @@ from mu.rhy import binr
 from mu.utils import activity_levels
 from mu.utils import tools
 
-from mu.sco import old
-
 from . import ambitus
 from . import counterpoint_constraints as constraints
 
@@ -420,6 +418,25 @@ class Counterpoint(abc.ABC):
 
         return tuple(allowed_pitches)
 
+    @staticmethod
+    def __find_most_balanced_additional_beats(
+        n_beats: int, known_beats: tuple, potential_beats: tuple
+    ) -> tuple:
+        """find most balanced additional beats to a list of known beats
+
+        n_beats: how many new beats have to be found
+        know_beats: tuple of absolute beat positions that are already known
+        potential_beats: tuple of beats that could potentially be added
+        """
+        solution_and_fitness = []
+        for comb in itertools.combinations(potential_beats, n_beats):
+            solution = tuple(sorted(known_beats + tuple(comb)))
+            distances = tuple(b - a for a, b in zip(solution, solution[1:]))
+            fitness = sum(abs(a - b) for a, b in itertools.combinations(distances, 2))
+            solution_and_fitness.append((solution, fitness))
+
+        return sorted(solution_and_fitness, key=operator.itemgetter(1))[0][0]
+
     def __add_dissonant_pitches_to_one_voice(
         self,
         voice_idx: int,
@@ -603,10 +620,12 @@ class Counterpoint(abc.ABC):
                             for weight in sorted(set(weights_per_beat), reverse=True)
                         )
 
+                        used_beats = None
                         found_beats = []
                         beats2find = len(found_pitches) + 1
                         for division in divided_weights_per_beat:
                             if beats2find == 0:
+                                used_beats = tuple(sorted(found_beats))
                                 break
 
                             division_size = len(division)
@@ -615,14 +634,17 @@ class Counterpoint(abc.ABC):
                                 found_beats.extend(division)
 
                             else:
-                                for idx in tools.accumulate_from_zero(
-                                    tools.euclid(division_size, beats2find)
-                                )[:-1]:
-                                    found_beats.append(division[idx])
+                                used_beats = self.__find_most_balanced_additional_beats(
+                                    beats2find, tuple(found_beats), division
+                                )
+                                break
 
-                                beats2find = 0
+                        if not used_beats:
+                            used_beats = tuple(sorted(found_beats))
 
-                        for pitch, beat in zip(found_pitches, found_beats[1:]):
+                        print("USED_BEATS", tuple(area[0] + b for b in used_beats))
+
+                        for pitch, beat in zip(found_pitches, used_beats[1:]):
                             pitches.append(pitch)
                             absolute_beats.append(beat + area[0])
                             is_not_dissonant_pitch.append(False)
@@ -639,11 +661,9 @@ class Counterpoint(abc.ABC):
             absolute_beats.append(voice[1].convert2absolute()[-1])
             is_not_dissonant_pitch.append(True)
 
-            data = (
-                tuple(pitches),
-                binr.Compound(absolute_beats + [voice[1].beats]).convert2relative(),
-                tuple(is_not_dissonant_pitch),
-            )
+            rhythm = binr.Compound(absolute_beats + [voice[1].beats]).convert2relative()
+
+            data = (tuple(pitches), rhythm, tuple(is_not_dissonant_pitch))
 
             # change result by user definied constrains
             for constrain in self._constraints_added_pitches:
