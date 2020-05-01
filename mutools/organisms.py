@@ -57,7 +57,7 @@ class Organism(old.Polyphon):
         # set attributes
         available_pitches = functools.reduce(operator.add, allowed_pitches_per_voice)
         for vox in predefined_voices:
-            available_pitches += tuple(vox.pitch)
+            available_pitches += tuple(p for p in vox.pitch if not p.is_empty)
 
         import random
 

@@ -18,11 +18,13 @@ with MUs 'stereo_mixdown' method.
 # TODO(Add MU objects for score generation [similar organisiation of segments that get
 # glued to bigger structures])
 
-
+import functools
+import operator
 import os
 import subprocess
 import progressbar
 
+from mu.utils import interpolations
 from mu.utils import tools
 
 from mutools import csound
@@ -101,6 +103,59 @@ class Orchestration(object):
         return len(self.__tracks)
 
 
+class _AttachEnvelope(synthesis.BasedCsoundEngine):
+    def __init__(
+        self, path: str, envelopes: tuple, upper_process: subprocess.Popen
+    ) -> None:
+        self.__path = "{}.wav".format(path)
+        self.__changed_path = "{}_copied.wav".format(path)
+        self.__envelopes = envelopes
+        self.__upper_process = upper_process
+
+    @property
+    def cname(self) -> str:
+        return ".enveloper"
+
+    @property
+    def orc(self) -> str:
+        envelope_names = []
+        envelope_lines = []
+        for idx, interpolation in enumerate(self.__envelopes):
+            name = "kEnvelope{}".format(idx)
+            linseg = ", ".join(
+                str(item)
+                for item in functools.reduce(
+                    operator.add,
+                    tuple(
+                        (point.value, point.delay) if point.delay else (point.value,)
+                        for point in interpolation
+                    ),
+                )
+            )
+            envelope = "{} linseg {}".format(name, linseg)
+            envelope_names.append(name)
+            envelope_lines.append(envelope)
+
+        lines = (r"0dbfs=1", r"instr 1")
+        lines += tuple(envelope_lines)
+        lines += (
+            r'aSig diskin2 "{}", 1, 0, 0, 6, 4'.format(self.__changed_path),
+            r"out {}".format(" * ".join(["aSig"] + envelope_names)),
+            r"endin",
+        )
+        return "\n".join(lines)
+
+    @property
+    def sco(self) -> str:
+        return "i1 0 {}".format(self.__duration)
+
+    def render(self, name: str) -> subprocess.Popen:
+        self.__upper_process.wait()
+        subprocess.call(["mv", self.__path, self.__changed_path])
+        self.__duration = synthesis.pyo.sndinfo(self.__changed_path)[1]
+        return super().render(name)
+
+
 class _SegmentMeta(type):
     def __new__(cls, name, bases, dct):
         x = super().__new__(cls, name, bases, dct)
@@ -113,9 +168,17 @@ class Segment(_NamedObject, metaclass=_SegmentMeta):
     orchestration = Orchestration()
 
     def __init__(
-        self, name: str, start: float = 0, tracks2ignore: tuple = tuple([]), **kwargs
+        self,
+        name: str,
+        start: float = 0,
+        tracks2ignore: tuple = tuple([]),
+        volume_envelope: interpolations.InterpolationLine = None,
+        volume_envelope_per_track: dict = dict([]),
+        **kwargs
     ) -> None:
         _NamedObject.__init__(self, name)
+        self.__volume_envelope = volume_envelope
+        self.__volume_envelope_per_track = volume_envelope_per_track
         self.__data = kwargs
         self.__start = start
         # tracks that can be ignored for calculating the duration of a Segment
@@ -139,22 +202,44 @@ class Segment(_NamedObject, metaclass=_SegmentMeta):
         return "Segment({})".format(self.name)
 
     def render(self, path: str) -> tuple:
-        """Make empty sound file for any track that hasn't been initalized.
+        """Render all sound files.
 
-        If you don't want to lose this functionality, don't forget
-            super().render(path)
-        as a last line for the render method of inherited classes.
+        Make empty sound file for any track that hasn't been initalized.
         """
         processes = []
         duration = self.duration
         for track in self.orchestration:
             data = getattr(self, track.name)
             sound_engine = data["sound_engine"]
+            is_silent = False
+
             if sound_engine is None:
                 sound_engine = synthesis.SilenceEngine(duration)
+                is_silent = True
+
             if isinstance(sound_engine, synthesis.PyoEngine):
                 sound_engine = sound_engine.copy()
-            processes.append(sound_engine.render("{}/{}".format(path, track.name)))
+
+            local_path = "{}/{}".format(path, track.name)
+            process = sound_engine.render(local_path)
+
+            if not is_silent:
+                try:
+                    track_envelope = self.__volume_envelope_per_track[track.name]
+                except KeyError:
+                    track_envelope = None
+
+                envelopes = tuple(
+                    env for env in (self.__volume_envelope, track_envelope) if env
+                )
+
+                if envelopes:
+                    additional_process = _AttachEnvelope(
+                        local_path, envelopes, process
+                    ).render(local_path)
+                    processes.append(additional_process)
+
+            processes.append(process)
 
         return tuple(processes)
 
