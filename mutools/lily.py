@@ -11,6 +11,8 @@ except ImportError:
 
 import crosstrainer
 
+from mu.utils import tools
+
 """This module contains small functions that may help to generate scores with abjad.
 
 The main focus are functions that may help to convert algorithmically generated abstract
@@ -20,13 +22,11 @@ time signature, beams, ties and accidentals are occuring).
 
 
 def mk_no_time_signature():
-    return abjad.LilyPondCommand("override Score.TimeSignature.stencil = ##f", "before")
+    return abjad.LilyPondLiteral("override Score.TimeSignature.stencil = ##f", "before")
 
 
-def mk_numeric_ts() -> abjad.LilyPondCommand:
-    return abjad.LilyPondCommand(
-        "numericTimeSignature", "before"
-    )
+def mk_numeric_ts() -> abjad.LilyPondLiteral:
+    return abjad.LilyPondLiteral("numericTimeSignature", "before")
 
 
 def mk_staff(voices, clef="percussion") -> abjad.Staff:
@@ -40,42 +40,43 @@ def mk_staff(voices, clef="percussion") -> abjad.Staff:
 
 
 def mk_cadenza():
-    return abjad.LilyPondCommand("cadenzaOn", "before")
+    return abjad.LilyPondLiteral("\\cadenzaOn", "before")
 
 
-def mk_bar_line() -> abjad.LilyPondCommand:
-    return abjad.LilyPondCommand('bar "|"', "after")
+def mk_bar_line() -> abjad.LilyPondLiteral:
+    return abjad.LilyPondLiteral('bar "|"', "after")
 
 
-def seperate_by_grid(delay, start, stop, absolute_grid, grid, grid_object) -> tuple:
+def seperate_by_grid(
+    start: fractions.Fraction, stop: fractions.Fraction, grid: tuple
+) -> tuple:
+    def detect_data(i: int, group: int) -> tuple:
+        if i == 0:
+            diff = start - absolute_grid[group]
+            new_delay = grid[group] - diff
+            is_connectable = any((start in absolute_grid, new_delay.denominator <= 4))
+        elif i == len(passed_groups) - 1:
+            new_delay = stop - absolute_grid[group]
+            is_connectable = any((stop in absolute_grid, new_delay.denominator <= 4))
+        else:
+            new_delay = grid[group]
+            is_connectable = True
+
+        return is_connectable, new_delay
+
+    absolute_grid = tools.accumulate_from_zero(grid)
     grid_start = bisect.bisect_right(absolute_grid, start) - 1
     grid_stop = bisect.bisect_right(absolute_grid, stop)
     passed_groups = tuple(range(grid_start, grid_stop, 1))
 
-    # are_both_on_line = all((start in absolute_grid, stop in absolute_grid))
-
     if len(passed_groups) == 1:
-        return (delay,)
+        return (stop - start,)
 
     else:
         delays = []
         is_connectable_per_delay = []
         for i, group in enumerate(passed_groups):
-            if i == 0:
-                diff = start - absolute_grid[group]
-                new_delay = grid[group] - diff
-                is_connectable = any(
-                    (start in absolute_grid, new_delay.denominator <= 4)
-                )
-            elif i == len(passed_groups) - 1:
-                new_delay = stop - absolute_grid[group]
-                is_connectable = any(
-                    (stop in absolute_grid, new_delay.denominator <= 4)
-                )
-            else:
-                new_delay = grid[group]
-                is_connectable = True
-
+            is_connectable, new_delay = detect_data(i, group)
             if new_delay > 0:
                 delays.append(new_delay)
                 is_connectable_per_delay.append(is_connectable)
@@ -121,43 +122,42 @@ def seperate_by_grid(delay, start, stop, absolute_grid, grid, grid_object) -> tu
         return tuple(result)
 
 
-def seperate_by_assignablity(duration, grid) -> tuple:
-    def find_sum_in_numbers(numbers, solution, allowed_combinations) -> tuple:
-        return tuple(
-            sorted(c, reverse=True)
-            for c in itertools.combinations_with_replacement(
-                numbers, allowed_combinations
-            )
-            if sum(c) == solution
-        )
+def seperate_by_assignability(
+    duration: fractions.Fraction,
+    max_duration: fractions.Fraction = fractions.Fraction(1, 1),
+) -> tuple:
+    def find_sum_in_numbers(numbers, solution) -> tuple:
+        result = []
+        # from smallest biggest to smallest
+        nums = reversed(sorted(numbers))
+        current_num = next(nums)
+        while sum(result) != solution:
+            if sum(result) + current_num <= solution:
+                result.append(current_num)
+            else:
+                current_num = next(nums)
+        return tuple(result)
 
-    if abjad.Duration(duration).is_assignable is True:
+    # easy claim for standard note duration
+    if abjad.Duration(duration).is_assignable and duration <= max_duration:
         return (abjad.Duration(duration),)
 
+    # top and bottom
     numerator = duration.numerator
     denominator = duration.denominator
+
+    # we only need note durations > 1 / denominator
     possible_durations = [
-        i
+        fractions.Fraction(i, denominator)
         for i in range(1, numerator + 1)
-        if abjad.Duration(i, denominator).is_assignable is True
+        # only standard note durations
+        if abjad.Duration(i, denominator).is_assignable
+        and (i / denominator) <= max_duration
     ]
-    solution = []
-    c = 1
-    while len(solution) == 0:
-        if c == len(possible_durations):
-            print(numerator, denominator)
-            raise ValueError("Can't find any possible combination")
-        s = find_sum_in_numbers(possible_durations, numerator, c)
-        if s:
-            solution.extend(s)
-        else:
-            c += 1
-    hof = crosstrainer.Stack(size=1, fitness="max")
-    for s in solution:
-        avg_diff = sum(abs(a - b) for a, b in itertools.combinations(s, 2))
-        hof.append(s, avg_diff)
-    best = hof.best[0]
-    return tuple(fractions.Fraction(s, denominator) for s in best)
+
+    # find the right combination
+    solution = find_sum_in_numbers(possible_durations, duration)
+    return solution
 
 
 def apply_beams(notes, durations, absolute_grid) -> tuple:
@@ -193,9 +193,7 @@ def convert_abjad_pitches_and_mu_rhythms2abjad_notes(
     harmonies: list, delays: list, grid
 ) -> list:
     leading_pulses = grid.leading_pulses
-    absolute_leading_pulses = tuple(
-        itertools.accumulate([0] + list(leading_pulses))
-    )
+    absolute_leading_pulses = tuple(itertools.accumulate([0] + list(leading_pulses)))
     converted_delays = grid.apply_delay(delays)
     absolute_delays = tuple(itertools.accumulate([0] + list(converted_delays)))
     # 1. generate notes
@@ -210,7 +208,7 @@ def convert_abjad_pitches_and_mu_rhythms2abjad_notes(
         )
         assert sum(seperated_by_grid) == delay
         for d in seperated_by_grid:
-            seperated_by_assignable = seperate_by_assignablity(d, grid)
+            seperated_by_assignable = seperate_by_assignability(d, grid)
             assert sum(seperated_by_assignable) == d
             for assignable in seperated_by_assignable:
                 resulting_durations.append(assignable)
@@ -224,6 +222,21 @@ def convert_abjad_pitches_and_mu_rhythms2abjad_notes(
         notes.extend(subnotes)
     assert sum(resulting_durations) == sum(converted_delays)
     # 2. apply beams
-    return apply_beams(
-        notes, resulting_durations, absolute_leading_pulses
-    )
+    return apply_beams(notes, resulting_durations, absolute_leading_pulses)
+
+
+EKMELILY_PREAMBLE = """
+\\include "ekmel.ily"
+\\language "english"
+\\ekmelicStyle "gost"
+
+\\ekmelicUserStyle pfeifer #'(
+  (1/12 #xE2C7)
+  (1/6 #xE2D1)
+  (1/3 #xE2CD)
+  (5/12 #xE2C3)
+  (-1/12 #xE2C2)
+  (-1/6 #xE2CC)
+  (-1/3 #xE2D0)
+  (-5/12 #xE2C6))
+"""

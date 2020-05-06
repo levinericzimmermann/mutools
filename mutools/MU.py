@@ -150,7 +150,8 @@ class _AttachEnvelope(synthesis.BasedCsoundEngine):
         return "i1 0 {}".format(self.__duration)
 
     def render(self, name: str) -> subprocess.Popen:
-        self.__upper_process.wait()
+        if self.__upper_process is not None:
+            self.__upper_process.wait()
         subprocess.call(["mv", self.__path, self.__changed_path])
         self.__duration = synthesis.pyo.sndinfo(self.__changed_path)[1]
         return super().render(name)
