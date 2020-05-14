@@ -48,7 +48,10 @@ def mk_bar_line() -> abjad.LilyPondLiteral:
 
 
 def seperate_by_grid(
-    start: fractions.Fraction, stop: fractions.Fraction, grid: tuple
+    start: fractions.Fraction,
+    stop: fractions.Fraction,
+    grid: tuple,
+    hard_cut: bool = False,
 ) -> tuple:
     def detect_data(i: int, group: int) -> tuple:
         if i == 0:
@@ -73,53 +76,78 @@ def seperate_by_grid(
         return (stop - start,)
 
     else:
-        delays = []
-        is_connectable_per_delay = []
-        for i, group in enumerate(passed_groups):
-            is_connectable, new_delay = detect_data(i, group)
-            if new_delay > 0:
-                delays.append(new_delay)
-                is_connectable_per_delay.append(is_connectable)
+        if hard_cut:
+            # TODO(make this less ugly)
 
-        ldelays = len(delays)
-        if ldelays == 1:
-            return tuple(delays)
+            for position, item in enumerate(absolute_grid):
+                if item > start:
+                    break
+                else:
+                    start_position = position
 
-        connectable_range = [int(not is_connectable_per_delay[0]), ldelays]
-        if not is_connectable_per_delay[-1]:
-            connectable_range[-1] -= 1
+            positions = [start] + list(absolute_grid[
+                start_position + 1 : start_position + len(passed_groups) + 1
+            ])
+            if stop == positions[-2]:
+                positions = positions[:-1]
+            else:
+                positions[-1] = stop
+            return tuple(b - a for a, b in zip(positions, positions[1:]))
 
-        solutions = [((n,), m) for n, m in enumerate(delays)]
-        for item0 in range(*connectable_range):
-            for item1 in range(item0 + 1, connectable_range[-1] + 1):
-                connected = sum(delays[item0:item1])
-                if abjad.Duration(connected).is_assignable:
-                    sol = (tuple(range(item0, item1)), connected)
-                    if sol not in solutions:
-                        solutions.append(sol)
+        else:
+            delays = []
+            is_connectable_per_delay = []
+            for i, group in enumerate(passed_groups):
+                is_connectable, new_delay = detect_data(i, group)
+                if new_delay > 0:
+                    delays.append(new_delay)
+                    is_connectable_per_delay.append(is_connectable)
 
-        possibilites = crosstrainer.Stack(fitness="min")
-        amount_connectable_items = len(delays)
-        has_found = False
-        lsolrange = tuple(range(len(solutions)))
-        for combsize in range(1, amount_connectable_items + 1):
-            for comb in itertools.combinations(lsolrange, combsize):
-                pos = tuple(solutions[idx] for idx in comb)
-                items = functools.reduce(operator.add, tuple(p[0] for p in pos))
-                litems = len(items)
-                is_unique = litems == len(set(items))
-                if is_unique and litems == amount_connectable_items:
-                    sorted_pos = tuple(
-                        item[1] for item in sorted(pos, key=lambda x: x[0][0])
-                    )
-                    fitness = len(sorted_pos)
-                    possibilites.append(sorted_pos, fitness)
-                    has_found = True
-            if has_found:
-                break
+            length_delays = len(delays)
+            if length_delays == 1:
+                return tuple(delays)
 
-        result = possibilites.best[0]
-        return tuple(result)
+            connectable_range = [int(not is_connectable_per_delay[0]), length_delays]
+
+            if not is_connectable_per_delay[-1]:
+                connectable_range[-1] -= 1
+
+            solutions = [((n,), m) for n, m in enumerate(delays)]
+            for item0 in range(*connectable_range):
+                for item1 in range(item0 + 1, connectable_range[-1] + 1):
+                    connected = sum(delays[item0:item1])
+                    if abjad.Duration(connected).is_assignable:
+                        sol = (tuple(range(item0, item1)), connected)
+                        if sol not in solutions:
+                            solutions.append(sol)
+
+            possibilites = crosstrainer.Stack(fitness="min")
+            amount_connectable_items = len(delays)
+            has_found = False
+            lsolrange = tuple(range(len(solutions)))
+
+            for combsize in range(1, amount_connectable_items + 1):
+
+                for comb in itertools.combinations(lsolrange, combsize):
+
+                    pos = tuple(solutions[idx] for idx in comb)
+                    items = functools.reduce(operator.add, tuple(p[0] for p in pos))
+                    litems = len(items)
+                    is_unique = litems == len(set(items))
+
+                    if is_unique and litems == amount_connectable_items:
+                        sorted_pos = tuple(
+                            item[1] for item in sorted(pos, key=lambda x: x[0][0])
+                        )
+                        fitness = len(sorted_pos)
+                        possibilites.append(sorted_pos, fitness)
+                        has_found = True
+
+                if has_found:
+                    break
+
+            result = possibilites.best[0]
+            return tuple(result)
 
 
 def seperate_by_assignability(

@@ -1,7 +1,9 @@
 from mu.mel import mel
 from mu.mel import ji
-from mu.rhy import rhy
 from mu.utils import tools
+
+from mu.sco import old
+from mu.rhy import rhy
 
 try:
     import quicktions as fractions
@@ -9,6 +11,7 @@ except ImportError:
     import fractions
 
 
+"""
 def quantisize_rhythm(
     pitch: tuple,
     rhythm: rhy.Compound,
@@ -39,6 +42,43 @@ def quantisize_rhythm(
         raise ValueError(msg)
 
     return pitch, tuple(b - a for a, b in zip(quantisized, quantisized[1:]))
+"""
+
+
+def quantisize_rhythm(
+    melody: old.Melody,
+    n_divisions: int = 8,
+    min_tone_size: fractions.Fraction = 0,
+    min_rest_size: fractions.Fraction = fractions.Fraction(1, 10),
+) -> tuple:
+
+    new_melody = []
+
+    min_size = fractions.Fraction(1, n_divisions)
+    left_over = 0
+    for tone in melody:
+        r = tone.delay
+
+        if tone.pitch.is_empty:
+            is_addable = r >= min_rest_size
+        else:
+            is_addable = r >= min_tone_size
+
+        if is_addable:
+            r += left_over
+            left_over = 0
+            quantisized = rhy.Unit(round(r * n_divisions) / n_divisions).fraction
+            if quantisized == 0:
+                quantisized = min_size
+
+            new_tone = tone.copy()
+            new_tone.delay = quantisized
+            new_tone.duration = quantisized
+            new_melody.append(new_tone)
+
+        else:
+            left_over += r
+    return old.Melody(new_melody)
 
 
 def quantisize_pitches(

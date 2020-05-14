@@ -5,9 +5,8 @@ Segment objects.
 
 For the usual workflow it is expected that the user...
     (1) first defines an Orchestration class for the complete piece.
-    (2) then defines classes that inherit from the MU.Segment class. To overwrite
-        the default render method is especially crucial for this process.
-    (3) last but not least, build objects from those Segment classes
+    (2) then defines classes that inherit from the MU.Segment class.
+    (3) last but not least, initalise objects from those Segment classes
         that are the input for the MU object.
 
 Then single tracks can be rendered through MUs render method.
@@ -62,27 +61,27 @@ class Track(_NamedObject):
 
     def __init__(self, name: str, volume: float = 1, panning: float = 0.5):
         _NamedObject.__init__(self, name)
-        self.__volume = volume
-        self.__volume_left, self.__volume_right = self.__get_panning_arguments(panning)
+        self._volume = volume
+        self._volume_left, self._volume_right = self._get_panning_arguments(panning)
 
     def __repr__(self) -> str:
         return "Track({})".format(self.name)
 
     @staticmethod
-    def __get_panning_arguments(pan) -> tuple:
+    def _get_panning_arguments(pan) -> tuple:
         return 1 - pan, pan
 
     @property
     def volume(self) -> float:
-        return self.__volume
+        return self._volume
 
     @property
     def volume_left(self) -> float:
-        return self.__volume_left
+        return self._volume_left
 
     @property
     def volume_right(self) -> float:
-        return self.__volume_right
+        return self._volume_right
 
 
 class Orchestration(object):
@@ -178,8 +177,8 @@ class Segment(_NamedObject, metaclass=_SegmentMeta):
         **kwargs
     ) -> None:
         _NamedObject.__init__(self, name)
-        self.__volume_envelope = volume_envelope
-        self.__volume_envelope_per_track = volume_envelope_per_track
+        self._volume_envelope = volume_envelope
+        self._volume_envelope_per_track = volume_envelope_per_track
         self.__data = kwargs
         self.__start = start
         # tracks that can be ignored for calculating the duration of a Segment
@@ -226,12 +225,12 @@ class Segment(_NamedObject, metaclass=_SegmentMeta):
 
             if not is_silent:
                 try:
-                    track_envelope = self.__volume_envelope_per_track[track.name]
+                    track_envelope = self._volume_envelope_per_track[track.name]
                 except KeyError:
                     track_envelope = None
 
                 envelopes = tuple(
-                    env for env in (self.__volume_envelope, track_envelope) if env
+                    env for env in (self._volume_envelope, track_envelope) if env
                 )
 
                 if envelopes:
@@ -254,7 +253,7 @@ class Segment(_NamedObject, metaclass=_SegmentMeta):
 
 
 class MU(_NamedObject):
-    __concatenated_path = "concatenated"
+    _concatenated_path = "concatenated"
 
     def __init__(
         self, name: str, orchestration: Orchestration, *segment, tail: float = 10
@@ -262,12 +261,12 @@ class MU(_NamedObject):
         _check_for_double_names(segment)
         _NamedObject.__init__(self, name)
         self.tail = tail
-        self.__segments = segment
-        self.__segments_by_name = {seg.name: seg for seg in segment}
-        self.__orchestration = orchestration
+        self._segments = segment
+        self._segments_by_name = {seg.name: seg for seg in segment}
+        self._orchestration = orchestration
 
         self.mkdir(self.name)
-        self.mkdir("{}/{}".format(self.name, self.__concatenated_path))
+        self.mkdir("{}/{}".format(self.name, self._concatenated_path))
 
         for segment in self.segments:
             self.mkdir("{}/{}".format(self.name, segment.name))
@@ -285,17 +284,17 @@ class MU(_NamedObject):
 
     @property
     def orchestration(self) -> Orchestration:
-        return self.__orchestration
+        return self._orchestration
 
     @property
     def segments(self) -> tuple:
-        return self.__segments
+        return self._segments
 
     def get_segment_by_name(self, name: str) -> tuple:
-        return self.__segments_by_name[name]
+        return self._segments_by_name[name]
 
     @staticmethod
-    def __make_sampler_orc(n_channels: int = 1) -> str:
+    def _make_sampler_orc(n_channels: int = 1) -> str:
         lines = (
             r"0dbfs=1",
             r"nchnls={}".format(n_channels),
@@ -362,7 +361,7 @@ class MU(_NamedObject):
                 local_sco_name = "{}_{}.sco".format(sco_name, track_idx)
 
                 with open(local_orc_name, "w") as f:
-                    f.write(self.__make_sampler_orc(n_channels=1))
+                    f.write(self._make_sampler_orc(n_channels=1))
 
                 relevant_data = []  # start, duration, path
 
@@ -395,7 +394,7 @@ class MU(_NamedObject):
                     f.write(sco)
 
                 sf_name = "{}/{}/{}.wav".format(
-                    self.name, self.__concatenated_path, track.name
+                    self.name, self._concatenated_path, track.name
                 )
                 processes.append(
                     csound.render_csound(sf_name, local_orc_name, local_sco_name)
@@ -427,7 +426,7 @@ class MU(_NamedObject):
         self.concatenate()
 
     def render_segment(self, segment_name: str) -> None:
-        return self.__segments_by_name[segment_name].render(
+        return self._segments_by_name[segment_name].render(
             "{}/{}".format(self.name, segment_name)
         )
 
@@ -445,10 +444,10 @@ class MU(_NamedObject):
         sco_name = ".mixdown.sco"
 
         with open(orc_name, "w") as f:
-            f.write(self.__make_sampler_orc(n_channels=2))
+            f.write(self._make_sampler_orc(n_channels=2))
 
         path_per_concatenated_file = tuple(
-            "{}/{}/{}.wav".format(self.name, self.__concatenated_path, track.name)
+            "{}/{}/{}.wav".format(self.name, self._concatenated_path, track.name)
             for track in self.orchestration
         )
 

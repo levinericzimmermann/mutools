@@ -1,4 +1,5 @@
 from . import alternating_hands
+from . import bpm_extract
 from . import counterpoint
 from . import common_harmonics
 from . import csound
@@ -12,5 +13,6 @@ from . import schillinger
 from . import synthesis
 from . import quantizise
 from . import tree
+from . import transcriptions
 from . import tsp
 from . import volume

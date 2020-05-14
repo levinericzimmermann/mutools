@@ -6,7 +6,7 @@ from mu.utils import interpolations
 
 
 class SoftLineGlissandoMaker(object):
-    """Object to make melodic lines more soft."""
+    """Object to make melodic lines more soft / more floating."""
 
     def __init__(
         self,
@@ -89,7 +89,11 @@ class SoftLineGlissandoMaker(object):
             halved_duration = tone.duration * 0.5
 
             # only add ornamentation if there isn't any glissando yet
-            if not tone.glissando and not tone.pitch.is_empty and halved_duration > self.__minima_gissando_duration:
+            if (
+                not tone.glissando
+                and not tone.pitch.is_empty
+                and halved_duration > self.__minima_gissando_duration
+            ):
                 previous = None
                 following = None
                 previous_distance = None
@@ -170,5 +174,48 @@ class SoftLineGlissandoMaker(object):
                         new_melody[idx].glissando = old.GlissandoLine(
                             interpolations.InterpolationLine(glissando_line)
                         )
+
+        return new_melody
+
+
+class TremoloMaker(object):
+    def __init__(
+        self,
+        add_tremolo_decider: infit.InfIt = infit.ActivityLevel(6),
+        tremolo_size_generator_per_tone: infit.MetaCycle = infit.MetaCycle(
+            (infit.Addition, (10, 2))
+        ),
+    ):
+        self.__add_tremolo_decider = add_tremolo_decider
+        self.__tremolo_size_generator_per_tone = tremolo_size_generator_per_tone
+
+    def __call__(self, melody: old.Melody) -> old.Melody:
+        new_melody = old.Melody([])
+
+        for tone in melody:
+            if not tone.pitch.is_empty and next(self.__add_tremolo_decider):
+                rhythm = tone.delay
+                duration_per_attack = []
+
+                tremolo_size_generator = next(self.__tremolo_size_generator_per_tone)
+
+                while sum(duration_per_attack) < rhythm:
+                    duration_per_attack.append(next(tremolo_size_generator))
+
+                if len(duration_per_attack) > 1:
+                    duration_per_attack = duration_per_attack[:-1]
+                    difference = rhythm - sum(duration_per_attack)
+                    duration_per_attack[-1] += difference
+                else:
+                    difference = sum(duration_per_attack) - rhythm
+                    duration_per_attack[-1] -= difference
+
+                for duration in duration_per_attack:
+                    new_melody.append(
+                        old.Tone(tone.pitch.copy(), duration, volume=tone.volume)
+                    )
+
+            else:
+                new_melody.append(tone.copy())
 
         return new_melody
