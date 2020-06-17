@@ -11,7 +11,11 @@ except ImportError:
 
 import crosstrainer
 
+from mu.mel import ji
+from mu.sco import old
 from mu.utils import tools
+
+from . import attachments
 
 """This module contains small functions that may help to generate scores with abjad.
 
@@ -19,6 +23,40 @@ The main focus are functions that may help to convert algorithmically generated 
 musical data to a form thats closer to notation (where suddenly questions about
 time signature, beams, ties and accidentals are occuring).
 """
+
+
+class NOvent(old.Ovent):
+    _available_attachments = {at.name: at for at in attachments.ALL_ATTACHMENTS}
+
+    def __init__(self, *args, **kwargs) -> None:
+        new_kwargs = {}
+
+        obj_attachments = {name: None for name in self._available_attachments}
+        for kwarg in kwargs:
+            if kwarg in obj_attachments:
+                obj_attachments.update({kwarg: kwargs[kwarg]})
+            else:
+                new_kwargs.update({kwarg: kwargs[kwarg]})
+
+        for attachment in obj_attachments:
+            setattr(self, attachment, obj_attachments[attachment])
+
+        super().__init__(*args, **new_kwargs)
+
+    @property
+    def attachments(self) -> tuple:
+        return tuple(
+            filter(
+                lambda x: bool(x),
+                (getattr(self, name) for name in self._available_attachments),
+            )
+        )
+
+
+class NOventLine(old.AbstractLine):
+    """A NOventLine contains sequentially played NOvents."""
+
+    _object = NOvent()
 
 
 def mk_no_time_signature():
@@ -85,9 +123,11 @@ def seperate_by_grid(
                 else:
                     start_position = position
 
-            positions = [start] + list(absolute_grid[
-                start_position + 1 : start_position + len(passed_groups) + 1
-            ])
+            positions = [start] + list(
+                absolute_grid[
+                    start_position + 1 : start_position + len(passed_groups) + 1
+                ]
+            )
             if stop == positions[-2]:
                 positions = positions[:-1]
             else:
@@ -253,6 +293,24 @@ def convert_abjad_pitches_and_mu_rhythms2abjad_notes(
     return apply_beams(notes, resulting_durations, absolute_leading_pulses)
 
 
+def round_cents_to_12th_tone(cents: float) -> float:
+    ct = cents / 100
+    # round to 12th tone
+    ct = round(ct * 6) / 6
+    return ct
+
+
+def convert2abjad_pitch(
+    pitch: ji.JIPitch, ratio2pitchclass_dict: dict
+) -> abjad.NamedPitch:
+    octave = pitch.octave + 4
+    pitch_class = ratio2pitchclass_dict[pitch.register(0)]
+    confused_octave_tests = (pitch_class[0] == "c", pitch.register(0).cents > 1000)
+    if all(confused_octave_tests):
+        octave += 1
+    return abjad.NamedPitch(pitch_class, octave=octave)
+
+
 EKMELILY_PREAMBLE = """
 \\include "ekmel.ily"
 \\language "english"
@@ -263,8 +321,17 @@ EKMELILY_PREAMBLE = """
   (1/6 #xE2D1)
   (1/3 #xE2CD)
   (5/12 #xE2C3)
+  (7/12 #xE2C8)
+  (2/3 #xE2D2)
+  (5/6 #xE2CE)
+  (11/12 #xE2C4)
   (-1/12 #xE2C2)
   (-1/6 #xE2CC)
   (-1/3 #xE2D0)
-  (-5/12 #xE2C6))
+  (-5/12 #xE2C6)
+  (-7/12 #xE2C1)
+  (-2/3 #xE2CB)
+  (-5/6 #xE2CF)
+  (-11/12 #xE2C5))
+
 """

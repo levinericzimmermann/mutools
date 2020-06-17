@@ -56,6 +56,7 @@ def quantisize_rhythm(
 
     min_size = fractions.Fraction(1, n_divisions)
     left_over = 0
+
     for tone in melody:
         r = tone.delay
 
@@ -78,6 +79,10 @@ def quantisize_rhythm(
 
         else:
             left_over += r
+
+    new_melody[-1].delay += left_over
+    new_melody[-1].duration += left_over
+
     return old.Melody(new_melody)
 
 

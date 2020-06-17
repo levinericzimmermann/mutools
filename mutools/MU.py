@@ -381,7 +381,11 @@ class MU(_NamedObject):
                             added_value_for_start_position_for_first_segment
                         )
 
-                    duration = getattr(segment, track.name)["duration"] + self.tail
+                    duration = getattr(segment, track.name)["duration"]
+                    if duration < segment.duration:
+                        duration = segment.duration
+
+                    duration += self.tail
                     relevant_data.append((start_position, duration, path))
 
                     is_first_segment = False

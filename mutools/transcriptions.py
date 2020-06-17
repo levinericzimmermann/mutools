@@ -8,6 +8,7 @@ import abjad
 import xml.etree.ElementTree as ET
 
 from mu.mel import mel
+from mu.mel import ji
 from mu.midiplug import midiplug
 from mu.sco import old
 from mu.rhy import rhy
@@ -16,6 +17,240 @@ from mu.utils import tools
 from . import bpm_extract
 from . import lily
 from . import quantizise
+
+
+class TimeTranscriber(object):
+    r"""Class to convert raw musical data to precise noteable rhythms, metre & tempo.
+
+    Because
+    """
+
+    def __init__(
+        self,
+        stretch_factor: float = 1,
+        n_divisions: int = 8,
+        min_tone_size: fractions.Fraction = 0,
+        min_rest_size: fractions.Fraction = fractions.Fraction(1, 10),
+    ):
+        pass
+
+    def __call__(self, sf_path: str, tones: tuple) -> old.Melody:
+        pass
+
+    @staticmethod
+    def estimate_tempo(
+        name: str, method: str = "essentia", params: dict = None
+    ) -> float:
+        return bpm_extract.BPM("{}.wav".format(name), method=method, params=params)
+
+    @staticmethod
+    def estimate_rhythm():
+        pass
+
+    @staticmethod
+    def estimate_metre():
+        pass
+
+    @staticmethod
+    def quantisize_rhythm(
+        melody: old.Melody,
+        n_divisions: int = 8,
+        min_tone_size: fractions.Fraction = 0,
+        min_rest_size: fractions.Fraction = fractions.Fraction(1, 10),
+    ) -> tuple:
+
+        new_melody = []
+
+        min_size = fractions.Fraction(1, n_divisions)
+        left_over = 0
+
+        for tone in melody:
+            r = tone.delay
+
+            if tone.pitch.is_empty:
+                is_addable = r >= min_rest_size
+            else:
+                is_addable = r >= min_tone_size
+
+            if is_addable:
+                r += left_over
+                left_over = 0
+                quantisized = rhy.Unit(round(r * n_divisions) / n_divisions).fraction
+                if quantisized == 0:
+                    quantisized = min_size
+
+                new_tone = tone.copy()
+                new_tone.delay = quantisized
+                new_tone.duration = quantisized
+                new_melody.append(new_tone)
+
+            else:
+                left_over += r
+
+        new_melody[-1].delay += left_over
+        new_melody[-1].duration += left_over
+
+        return old.Melody(new_melody)
+
+    def quantizise(
+        self,
+        stretch_factor: float = 1,
+        n_divisions: int = 8,
+        min_tone_size: fractions.Fraction = 0,
+        min_rest_size: fractions.Fraction = fractions.Fraction(1, 10),
+    ) -> tuple:
+        delays = rhy.Compound(tuple(t.delay for t in self.tones)).stretch(
+            stretch_factor
+        )
+        tones = old.Melody(self.tones).copy()
+        tones.delay = delays
+        tones.dur = delays
+
+        melody = quantizise.quantisize_rhythm(
+            tones, n_divisions, min_tone_size, min_rest_size
+        )
+        return melody.pitch, melody.delay
+
+
+class ComplexScaleTranscriber(object):
+    r"""Class to quantizise a series of frequencies with a complex scale.
+
+    A complex scale is defined as a scale that has multiple options or intonations for the
+    same scale degree.
+    """
+
+    def __init__(self, original_scale: tuple, intonations_per_scale_degree: tuple):
+        self._scale_size = len(original_scale)
+        self._original_scale = original_scale
+        self._intonations_per_scale_degree = intonations_per_scale_degree
+        dtosdpsd = self.find_distance_to_other_scale_degrees_per_scale_degree(
+            original_scale
+        )
+        self._distance_to_other_scale_degrees_per_scale_degree = dtosdpsd
+        self._deviation_from_ideal_scale_degree_per_intonation = tuple(
+            tuple(intonation.cents - ideal for intonation in scale_degree)
+            for scale_degree, ideal in zip(intonations_per_scale_degree, original_scale)
+        )
+
+    @staticmethod
+    def find_distance_to_other_scale_degrees_per_scale_degree(
+        original_scale: tuple
+    ) -> tuple:
+        distance_to_other_scale_degrees_per_scale_degree = []
+
+        for scale_degree0 in original_scale:
+            distance_to_other_scale_degrees = []
+            for octave in (-1, 0, 1):
+                for scale_degree1_idx, scale_degree1 in enumerate(original_scale):
+                    scale_degree1 += 1200 * octave
+                    difference = scale_degree1 - scale_degree0
+                    distance_to_other_scale_degrees.append(
+                        ((scale_degree1_idx, octave), difference)
+                    )
+
+            distance_to_other_scale_degrees_per_scale_degree.append(
+                tuple(distance_to_other_scale_degrees)
+            )
+
+        return tuple(distance_to_other_scale_degrees_per_scale_degree)
+
+    def _detect_starting_scale_degree(self, cent_distances: tuple) -> int:
+        scale_degree_fitness_pairs = []
+
+        for scale_degree in range(self._scale_size):
+            fitness = 0
+
+            last_scale_degree = int(scale_degree)
+            for distance in cent_distances:
+
+                closest_item = tools.find_closest_item(
+                    distance,
+                    self._distance_to_other_scale_degrees_per_scale_degree[
+                        last_scale_degree
+                    ],
+                    key=operator.itemgetter(1),
+                )
+
+                fitness += abs(distance - closest_item[1])
+                last_scale_degree = closest_item[0][0]
+
+            scale_degree_fitness_pairs.append((scale_degree, fitness))
+
+        return min(scale_degree_fitness_pairs, key=operator.itemgetter(1))[0]
+
+    def _make_transcription(
+        self,
+        starting_scale_degree: int,
+        starting_intonation: int,
+        cent_distances: float,
+    ) -> tuple:
+
+        pitches = [(starting_scale_degree, starting_intonation, 0)]
+        fitness = 0
+
+        for distance in cent_distances:
+            last_scale_degree, last_intonation, last_octave = pitches[-1]
+            adapted_distance = (
+                distance
+                + self._deviation_from_ideal_scale_degree_per_intonation[
+                    last_scale_degree
+                ][last_intonation]
+            )
+            closest_item = tools.find_closest_item(
+                adapted_distance,
+                self._distance_to_other_scale_degrees_per_scale_degree[
+                    last_scale_degree
+                ],
+                key=operator.itemgetter(1),
+            )
+
+            new_scale_degree = closest_item[0][0]
+            new_octave = last_octave + closest_item[0][1]
+
+            last_pitch = self._intonations_per_scale_degree[last_scale_degree][
+                last_intonation
+            ]
+            last_pitch += ji.r(1, 1).register(last_octave)
+
+            octavater = ji.r(1, 1).register(new_octave)
+            possible_intonations = tuple(
+                intonation + octavater
+                for intonation in self._intonations_per_scale_degree[new_scale_degree]
+            )
+            last_pitch_cents = last_pitch.cents
+            distance_per_intonation = tuple(
+                into.cents - last_pitch_cents for into in possible_intonations
+            )
+            new_intonation = tools.find_closest_index(distance, distance_per_intonation)
+            fitness += distance_per_intonation[new_intonation]
+
+            pitches.append((new_scale_degree, new_intonation, new_octave))
+
+        return tuple(pitches), fitness
+
+    def __call__(self, frequencies: tuple) -> tuple:
+        cent_distances = tuple(
+            mel.SimplePitch.hz2ct(f0, f1)
+            for f0, f1 in zip(frequencies, frequencies[1:])
+        )
+        starting_scale_degree = self._detect_starting_scale_degree(cent_distances)
+
+        transcription_and_fitness_pairs = []
+        for n, intonation in enumerate(
+            self._intonations_per_scale_degree[starting_scale_degree]
+        ):
+            transcription_and_fitness_pairs.append(
+                self._make_transcription(starting_scale_degree, n, cent_distances)
+            )
+
+        best = min(transcription_and_fitness_pairs, key=operator.itemgetter(1))[0]
+
+        # convert abstract data to actual pitch objects
+        return tuple(
+            self._intonations_per_scale_degree[data[0]][data[1]]
+            + ji.r(1, 1).register(data[2])
+            for data in best
+        )
 
 
 class Transcription(object):
@@ -64,18 +299,38 @@ class Transcription(object):
     >>> )
     """
 
-    def __init__(self, name: str, tones: tuple, frequency_range: tuple = None):
+    def __init__(
+        self,
+        name: str,
+        tones: tuple,
+        bars: tuple = None,
+        frequency_range: tuple = None,
+        concert_pitch: float = None,
+    ):
         self.__name = name
         self.__tones = tones
+        self.__bars = bars
         self.__frequency_range = frequency_range
+        self.__concert_pitch = concert_pitch
 
     @property
     def name(self) -> str:
         return self.__name
 
     @property
+    def bars(self) -> tuple:
+        return self.__bars
+
+    @property
     def tones(self) -> tuple:
         return self.__tones
+
+    @property
+    def concert_pitch(self) -> float:
+        if self.__concert_pitch:
+            return self.__concert_pitch
+        else:
+            return 440
 
     @property
     def frequency_range(self) -> tuple:
@@ -100,12 +355,6 @@ class Transcription(object):
             data.append([freq, start, stop_time, volume])
 
         return tuple(map(tuple, data))
-
-    @staticmethod
-    def estimate_tempo(
-        name: str, method: str = "essentia", params: dict = None
-    ) -> float:
-        return bpm_extract.BPM("{}.wav".format(name), method=method, params=params)
 
     @staticmethod
     def _convert_data2melody(
@@ -147,13 +396,38 @@ class Transcription(object):
         return tuple(melody)
 
     @classmethod
+    def from_complex_scale(
+        cls,
+        name: str,
+        original_scale: tuple,
+        intonations_per_scale_degree: tuple,
+        octave_of_first_pitch: int = 0,
+        tempo_estimation_method: str = "essentia",
+    ) -> "Transcription":
+        root = cls._get_root("{}.svl".format(name))
+        frequency_range = root[0][0].attrib["minimum"], root[0][0].attrib["maximum"]
+        data = cls._filter_data_from_root(root)
+
+        frequencies = tuple(map(operator.itemgetter(0), data))
+        pitch_transcriber = ComplexScaleTranscriber(
+            original_scale, intonations_per_scale_degree
+        )
+
+        octavater = ji.r(1, 1).register(octave_of_first_pitch)
+        pitches = tuple(octavater + pitch for pitch in pitch_transcriber(frequencies))
+        new_data = tuple((pitch,) + tone[1:] for pitch, tone in zip(pitches, data))
+
+        melody = cls._convert_data2melody(new_data, name, tempo_estimation_method)
+        return cls(name, tuple(melody), frequency_range)
+
+    @classmethod
     def from_scale(
         cls,
         name: str,
         scale: tuple,
-        scale_degree_of_first_pitch: int = 0,
         octave_of_first_pitch: int = 0,
-        tolerance_factor_for_same_scale_degree: float = 0.9,
+        scale_degree_of_first_pitch: int = None,
+        tolerance_factor_for_same_scale_degree: float = 1 / 8,
         tempo_estimation_method: str = "essentia",
     ) -> "Transcription":
         def normalize_scale_degree(scale_degree: int, octave: int) -> tuple:
@@ -166,13 +440,6 @@ class Transcription(object):
                 octave -= 1
 
             return scale_degree, octave
-
-        # testing scale for correct values
-        for p in scale:
-            assert p.octave == 0
-
-        # sorting scale
-        scale = tuple(sorted(scale))
 
         scale_size = len(scale)
 
@@ -276,24 +543,11 @@ class Transcription(object):
         melody = cls._convert_data2melody(new_data, name, tempo_estimation_method)
         return cls(name, tuple(melody), frequency_range)
 
-    def quantizise(
-        self,
-        stretch_factor: float = 1,
-        n_divisions: int = 8,
-        min_tone_size: fractions.Fraction = 0,
-        min_rest_size: fractions.Fraction = fractions.Fraction(1, 10),
-    ) -> tuple:
-        delays = rhy.Compound(tuple(t.delay for t in self.tones)).stretch(
-            stretch_factor
-        )
-        tones = old.Melody(self.tones).copy()
-        tones.delay = delays
-        tones.dur = delays
+    def show(self) -> None:
+        pass
 
-        melody = quantizise.quantisize_rhythm(
-            tones, n_divisions, min_tone_size, min_rest_size
-        )
-        return melody.pitch, melody.delay
+    def play(self) -> None:
+        pass
 
     def convert2score(
         self,
@@ -371,12 +625,18 @@ class Transcription(object):
 
     def synthesize(
         self,
-        concert_pitch: float = 260,
         stretch_factor: float = 1,
         n_divisions: int = 8,
         min_tone_size: fractions.Fraction = 0,
         min_rest_size: fractions.Fraction = fractions.Fraction(1, 10),
+        concert_pitch: float = None,
+        tie_notes: bool = False,
+        remove_rests: bool = False,
     ) -> None:
+
+        if not concert_pitch:
+            concert_pitch = self.concert_pitch
+
         pitches, delays = self.quantizise(
             stretch_factor=stretch_factor,
             n_divisions=n_divisions,
@@ -384,8 +644,18 @@ class Transcription(object):
             min_rest_size=min_rest_size,
         )
 
+        melody = old.Melody([old.Tone(p, d) for p, d in zip(pitches, delays)])
+
+        if remove_rests:
+            melody = melody.discard_rests()
+
+        if tie_notes:
+            melody = melody.tie()
+
         sequence = []
-        for p, d in zip(pitches, delays):
+        for tone in melody:
+            p = tone.pitch
+            d = tone.delay
             p.multiply = concert_pitch
             d *= 4
             sequence.append(midiplug.PyteqTone(p, d, d))

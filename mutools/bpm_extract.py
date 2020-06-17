@@ -2,15 +2,16 @@
 
 import aubio
 import essentia.standard as es
+import librosa
 import pyo
 
 import numpy as np
 
 
 class BPM(float):
-    _available_methods = set(("essentia", "aubio"))
+    _available_methods = set(("essentia", "aubio", "librosa"))
 
-    def __new__(self, path: str, method: str = "essentia", params: dict = None):
+    def __new__(self, path: str, method: str = "librosa", params: dict = None):
         assert method in self._available_methods
         bpm = getattr(self, "_{}".format(method))(path, params)
         return super().__new__(self, bpm)
@@ -105,3 +106,10 @@ class BPM(float):
         bpm, beats, beats_confidence, _, beats_intervals = rhythm_extractor(audio)
 
         return bpm
+
+    @staticmethod
+    def _librosa(path: str, params=None) -> float:
+        y, sr = librosa.load(path)
+        onset_env = librosa.onset.onset_strength(y, sr=sr)
+        tempo = librosa.beat.tempo(onset_envelope=onset_env, sr=sr)
+        return float(tempo[0])

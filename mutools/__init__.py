@@ -1,4 +1,5 @@
 from . import alternating_hands
+from . import attachments
 from . import bpm_extract
 from . import counterpoint
 from . import common_harmonics
@@ -6,6 +7,7 @@ from . import csound
 from . import grid
 from . import lily
 from . import MU
+from . import mus
 from . import ornamentations
 from . import pitchmap
 from . import pteqer
