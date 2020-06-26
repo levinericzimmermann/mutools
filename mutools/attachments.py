@@ -44,7 +44,6 @@ class Choose(Attachment):
     def attach(self, leaf: abjad.Chord, novent) -> None:
         for head in leaf.note_heads:
             abjad.tweak(head).color = "blue"
-            head.is_parenthesized = True
 
 
 class ChooseOne(Attachment):
@@ -55,7 +54,6 @@ class ChooseOne(Attachment):
     def attach(self, leaf: abjad.Chord, novent) -> None:
         for head in leaf.note_heads:
             abjad.tweak(head).color = "red"
-            head.is_parenthesized = True
 
 
 class Tremolo(Attachment):
@@ -90,13 +88,17 @@ class ArtificalHarmonic(Attachment):
         self.harmonic_interval = ji.r(nth_harmonic, nth_harmonic - 1).cents / 100
 
     def find_pitches(self, abjad_pitch: abjad.NamedPitch) -> None:
-        import lily
+        from mutools import lily
 
         basic_pitch = abjad.NamedPitch(
-            lily.round_cents_to_12th_tone(float(abjad_pitch) - self.ground_interval)
+            lily.round_scale_index_to_12th_tone(
+                float(abjad_pitch) - self.ground_interval
+            )
         )
         harmonic_pitch = abjad.NamedPitch(
-            lily.round_cents_to_12th_tone(float(basic_pitch) + self.harmonic_interval)
+            lily.round_scale_index_to_12th_tone(
+                float(basic_pitch) + self.harmonic_interval
+            )
         )
         return abjad.PitchSegment([basic_pitch, harmonic_pitch])
 
@@ -110,7 +112,7 @@ class ArtificalHarmonic(Attachment):
 
         pitches = self.find_pitches(leaf.note_heads[0].written_pitch)
         leaf.written_pitches = abjad.PitchSegment(pitches)
-        abjad.tweak(leaf.note_head[1]).style = "harmonic"
+        abjad.tweak(leaf.note_heads[1]).style = "harmonic"
 
 
 class Dynamic(Attachment):
@@ -161,12 +163,12 @@ class Tempo(Attachment):
         self,
         reference_duration: tuple,
         units_per_minute: tuple,
-        textual_indiciation: str = None,
+        textual_indication: str = None,
     ) -> None:
         self.abjad = abjad.MetronomeMark(
             reference_duration=reference_duration,
             units_per_minute=units_per_minute,
-            textual_indiciation=textual_indiciation,
+            textual_indication=textual_indication,
         )
 
     def __repr__(self) -> str:
@@ -177,6 +179,18 @@ class Tempo(Attachment):
             return self.abjad == other.abjad
         except AttributeError:
             return False
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(self.abjad, leaf)
+
+
+class Markup(Attachment):
+    name = "markup"
+    attach_on_each_part = False
+    is_on_off_notation = False
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.abjad = abjad.Markup(*args, **kwargs)
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
         abjad.attach(self.abjad, leaf)
@@ -204,6 +218,111 @@ class Arpeggio(Attachment):
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
         abjad.attach(self.abjad, leaf)
+
+
+class Clef(Attachment):
+    name = "clef"
+    attach_on_each_part = False
+    is_on_off_notation = True
+
+    def __init__(self, name: str) -> None:
+        self.abjad = abjad.Clef(name)
+
+    def __eq__(self, other) -> bool:
+        try:
+            return self.abjad == other.abjad
+        except AttributeError:
+            return False
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(self.abjad, leaf)
+
+
+class MarginMarkup(Attachment):
+    name = "margin_markup"
+    attach_on_each_part = False
+    is_on_off_notation = True
+
+    def __init__(self, content: str, context: str = "Staff") -> None:
+        cmd = "\\set {}.instrumentName = \\markup ".format(context)
+        cmd += "{ " + content + " }"
+        self.abjad = abjad.LilyPondLiteral(cmd)
+
+    def __eq__(self, other) -> bool:
+        try:
+            return self.abjad == other.abjad
+        except AttributeError:
+            return False
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(self.abjad, leaf)
+
+
+class Hauptstimme(Attachment):
+    name = "hauptstimme"
+    attach_on_each_part = False
+    is_on_off_notation = True
+
+    # copied from http://lsr.di.unimi.it/LSR/Snippet?id=843
+    _start = abjad.Markup(
+        r"""\path #0.25 #'((moveto 0 0)
+                 (lineto 0 -2)
+                 (moveto 0 -1)
+                 (lineto 1 -1)
+                 (moveto 1 0)
+                 (lineto 1 -2)
+                 (moveto 1 0)
+                 (lineto 1.8 0))""",
+        direction="up",
+    )
+
+    _stop = abjad.Markup(
+        r"""\path #0.25 #'((moveto 0.7 2.3)
+                           (lineto 1.5 2.3)
+                           (lineto 1.5 1.4))""",
+        direction="up",
+    )
+
+    _once = abjad.Markup(
+        r"""\path #0.25 #'((moveto 0 0)
+                 (lineto 0 -2)
+                 (moveto 0 -1)
+                 (lineto 1 -1)
+                 (moveto 1 0)
+                 (lineto 1 -2)
+                 (moveto 1 0)
+                 (lineto 1.8 0)
+                 (moveto 2.5 0)
+                 (lineto 3.2 0)
+                 (lineto 3.2 -1))""",
+        direction="up",
+    )
+
+    def __init__(self, is_hauptstimme: bool = False, is_once: bool = False) -> None:
+        self.is_hauptstimme = is_hauptstimme
+        self.is_once = is_once
+
+    def __eq__(self, other) -> bool:
+        try:
+            return all(
+                (
+                    self.is_hauptstimme == other.is_hauptstimme,
+                    self.is_once == other.is_once,
+                )
+            )
+        except AttributeError:
+            return False
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        if self.is_hauptstimme:
+            markup = self._start
+        else:
+            markup = self._stop
+
+        if self.is_once:
+            markup = self._once
+
+        abjad.attach(markup, leaf)
 
 
 ALL_ATTACHMENTS = tuple(
