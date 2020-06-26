@@ -717,6 +717,9 @@ class TrackMaker(abc.ABC):
 
         if container:
             bars.append(container)
+            if current_size >= current_ts.duration:
+                if last_ts != current_ts:
+                    abjad.attach(current_ts, container[0])
 
         return bars
 
