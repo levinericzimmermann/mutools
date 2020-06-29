@@ -212,9 +212,11 @@ def convert2abjad_pitch(
 ) -> abjad.NamedPitch:
     octave = pitch.octave + 4
     pitch_class = ratio2pitchclass_dict[pitch.register(0)]
+
     confused_octave_tests = (pitch_class[0] == "c", pitch.register(0).cents > 1000)
     if all(confused_octave_tests):
         octave += 1
+
     return abjad.NamedPitch(pitch_class, octave=octave)
 
 
@@ -232,6 +234,8 @@ EKMELILY_PREAMBLE = """
   (2/3 #xE2D2)
   (5/6 #xE2CE)
   (11/12 #xE2C4)
+  (13/12 #xE2C9)
+  (7/6 #xE2D3)
   (-1/12 #xE2C2)
   (-1/6 #xE2CC)
   (-1/3 #xE2D0)
@@ -239,6 +243,8 @@ EKMELILY_PREAMBLE = """
   (-7/12 #xE2C1)
   (-2/3 #xE2CB)
   (-5/6 #xE2CF)
-  (-11/12 #xE2C5))
+  (-11/12 #xE2C5)
+  (-13/12 #xE2C0)
+  (-7/6 #xE2CA))
 
 """

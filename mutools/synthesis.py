@@ -199,11 +199,16 @@ class PyteqEngine(SoundEngine):
                     else:
                         de = 0
                     if pi != mel.TheEmptyPitch:
+                        if chord.volume:
+                            volume = chord.volume
+                        else:
+                            volume = self.volume
+
                         tone = midiplug.PyteqTone(
                             ji.JIPitch(pi, multiply=self.CONCERT_PITCH),
                             de,
                             dur,
-                            volume=self.volume,
+                            volume=volume,
                         )
                     else:
                         tone = midiplug.PyteqTone(

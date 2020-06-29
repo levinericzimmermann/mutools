@@ -77,15 +77,28 @@ class Articulation(Attachment):
         abjad.attach(self.abjad, leaf)
 
 
+class ArticulationOnce(Attachment):
+    name = "articulation_once"
+    attach_on_each_part = False
+    is_on_off_notation = False
+
+    def __init__(self, name: str, direction: str = None) -> None:
+        self.abjad = abjad.Articulation(name, direction=direction)
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(self.abjad, leaf)
+
+
 class ArtificalHarmonic(Attachment):
     name = "artifical_harmonic"
     attach_on_each_part = True
     is_on_off_notation = False
 
-    def __init__(self, nth_harmonic: int) -> None:
+    def __init__(self, nth_harmonic: int, notation: abjad.PitchSegment = None) -> None:
         assert nth_harmonic > 1
         self.ground_interval = ji.r(nth_harmonic, 1).cents / 100
         self.harmonic_interval = ji.r(nth_harmonic, nth_harmonic - 1).cents / 100
+        self.notation = notation
 
     def find_pitches(self, abjad_pitch: abjad.NamedPitch) -> None:
         from mutools import lily
@@ -110,7 +123,10 @@ class ArtificalHarmonic(Attachment):
             msg += "exactly one pitch."
             raise ValueError(msg)
 
-        pitches = self.find_pitches(leaf.note_heads[0].written_pitch)
+        if self.notation:
+            pitches = self.notation
+        else:
+            pitches = self.find_pitches(leaf.note_heads[0].written_pitch)
         leaf.written_pitches = abjad.PitchSegment(pitches)
         abjad.tweak(leaf.note_heads[1]).style = "harmonic"
 
