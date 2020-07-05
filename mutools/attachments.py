@@ -1,4 +1,5 @@
 import abc
+import math
 import inspect
 import sys
 
@@ -31,9 +32,24 @@ class Optional(Attachment):
     is_on_off_notation = False
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
-        for head in leaf.note_heads:
-            abjad.tweak(head).font_size = -2
-            head.is_parenthesized = True
+        abjad.attach(abjad.LilyPondLiteral("\\once \\tiny"), leaf)
+        n_heads = len(leaf.note_heads)
+
+        if n_heads == 1:
+            size = 2
+            position2attach = 0
+        else:
+            size = 5.45
+            position2attach = int(math.ceil((n_heads / 2) - 1))
+
+        abjad.attach(
+            abjad.LilyPondLiteral(
+                "\\once \\override ParenthesesItem.font-size = #{}".format(size)
+            ),
+            leaf,
+        )
+
+        leaf.note_heads[position2attach].is_parenthesized = True
 
 
 class Choose(Attachment):
@@ -42,8 +58,9 @@ class Choose(Attachment):
     is_on_off_notation = False
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
-        for head in leaf.note_heads:
-            abjad.tweak(head).color = "blue"
+        # for head in leaf.note_heads:
+        #     abjad.tweak(head).color = "blue"
+        abjad.attach(abjad.Markup("\\teeny \\circle +", direction="up"), leaf)
 
 
 class ChooseOne(Attachment):
@@ -52,8 +69,9 @@ class ChooseOne(Attachment):
     is_on_off_notation = False
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
-        for head in leaf.note_heads:
-            abjad.tweak(head).color = "red"
+        # for head in leaf.note_heads:
+        #     abjad.tweak(head).color = "red"
+        abjad.attach(abjad.Markup("\\teeny \\circle 1", direction="up"), leaf)
 
 
 class Tremolo(Attachment):
@@ -94,11 +112,10 @@ class ArtificalHarmonic(Attachment):
     attach_on_each_part = True
     is_on_off_notation = False
 
-    def __init__(self, nth_harmonic: int, notation: abjad.PitchSegment = None) -> None:
+    def __init__(self, nth_harmonic: int) -> None:
         assert nth_harmonic > 1
         self.ground_interval = ji.r(nth_harmonic, 1).cents / 100
         self.harmonic_interval = ji.r(nth_harmonic, nth_harmonic - 1).cents / 100
-        self.notation = notation
 
     def find_pitches(self, abjad_pitch: abjad.NamedPitch) -> None:
         from mutools import lily
@@ -115,7 +132,8 @@ class ArtificalHarmonic(Attachment):
         )
         return abjad.PitchSegment([basic_pitch, harmonic_pitch])
 
-    def attach(self, leaf: abjad.Chord, novent) -> None:
+    @staticmethod
+    def _test_can_be_attached(leaf: abjad.Chord) -> None:
         try:
             assert len(leaf.note_heads) == 1
         except AssertionError:
@@ -123,11 +141,20 @@ class ArtificalHarmonic(Attachment):
             msg += "exactly one pitch."
             raise ValueError(msg)
 
-        if self.notation:
-            pitches = self.notation
-        else:
-            pitches = self.find_pitches(leaf.note_heads[0].written_pitch)
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        self._test_can_be_attached(leaf)
+        pitches = self.find_pitches(leaf.note_heads[0].written_pitch)
         leaf.written_pitches = abjad.PitchSegment(pitches)
+        abjad.tweak(leaf.note_heads[1]).style = "harmonic"
+
+
+class ArtificalHarmonicAddedPitch(ArtificalHarmonic):
+    def __init__(self, pitches: abjad.PitchSegment) -> None:
+        self.pitches = pitches
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        self._test_can_be_attached(leaf)
+        leaf.written_pitches = self.pitches
         abjad.tweak(leaf.note_heads[1]).style = "harmonic"
 
 
@@ -219,6 +246,18 @@ class Fermata(Attachment):
 
     def __init__(self, command: str = "fermata") -> None:
         self.abjad = abjad.Fermata(command)
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(self.abjad, leaf)
+
+
+class BarLine(Attachment):
+    name = "bar_line"
+    attach_on_each_part = False
+    is_on_off_notation = False
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.abjad = abjad.Fermata(*args, **kwargs)
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
         abjad.attach(self.abjad, leaf)

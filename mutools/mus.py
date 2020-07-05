@@ -403,7 +403,7 @@ class TrackMaker(abc.ABC):
 
     @staticmethod
     def _convert_symbolic_novent_line2asterisked_novent_line(
-        novent_line: lily.NOventLine
+        novent_line: lily.NOventLine,
     ) -> lily.NOventLine:
         new_line = []
 
@@ -451,9 +451,9 @@ class TrackMaker(abc.ABC):
     def _seperate_tone_with_glissando(self) -> tuple:
         raise NotImplementedError
 
-    @staticmethod
+    @classmethod
     def _convert_mu_pitch2named_pitch(
-        pitch: ji.JIPitch, ratio2pitchclass_dict: dict = None
+        cls, pitch: ji.JIPitch, ratio2pitchclass_dict: dict = None
     ) -> abjad.NamedPitch:
         if pitch.is_empty:
             np = None
@@ -628,7 +628,7 @@ class TrackMaker(abc.ABC):
             )
             raise NotImplementedError(msg)
 
-        return tuple(gs for i in range(float(time_signature.duration) // gs))
+        return tuple(gs for i in range(int(float(time_signature.duration) // gs)))
 
     @classmethod
     def _make_absolute_grid_for_time_signature_depending_beaming(
@@ -674,12 +674,22 @@ class TrackMaker(abc.ABC):
                 idx1 = len(notes)
 
             add_beams = False
+            n_rests = 0
             for n in notes[idx0:idx1]:
                 if type(n) not in (abjad.Rest, abjad.MultimeasureRest):
                     add_beams = True
-                    break
+                else:
+                    n_rests += 1
 
             if idx1 - idx0 < 2:
+                add_beams = False
+
+            n_notes_with_beams = 0
+            for n in notes[idx0:idx1]:
+                if n.written_duration < abjad.Duration(1, 4):
+                    n_notes_with_beams += 1
+
+            if n_notes_with_beams <= 1 and n_rests == 0:
                 add_beams = False
 
             if add_beams is True:
@@ -835,7 +845,11 @@ class TrackMaker(abc.ABC):
         novent_line: lily.NOventLine,
         time_signatures: tuple,
         ratio2pitchclass_dict: dict = None,
+        convert_mu_pitch2abjad_pitch_function=None,
     ) -> abjad.Staff:
+
+        if not convert_mu_pitch2abjad_pitch_function:
+            convert_mu_pitch2abjad_pitch_function = cls._convert_mu_pitch2named_pitch
 
         bar_grid, cautious_grid, grid = cls._mk_grids(time_signatures)
         absolute_bar_grid = tools.accumulate_from_zero(bar_grid)
@@ -851,7 +865,7 @@ class TrackMaker(abc.ABC):
 
             if novent.pitch:
                 abjad_pitches = tuple(
-                    TrackMaker._convert_mu_pitch2named_pitch(p, ratio2pitchclass_dict)
+                    convert_mu_pitch2abjad_pitch_function(p, ratio2pitchclass_dict)
                     for p in novent.pitch
                 )
 
