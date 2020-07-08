@@ -48,13 +48,66 @@ class Optional(Attachment):
             ),
             leaf,
         )
+        abjad.attach(
+            abjad.LilyPondLiteral("\\once \\override ParenthesesItem.padding = #0.05"),
+            leaf,
+        )
 
         leaf.note_heads[position2attach].is_parenthesized = True
+
+    def attach_first_leaf(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(abjad.LilyPondLiteral("\\startParenthesis"), leaf)
+        self.attach(leaf, novent)
+
+    def attach_middle_leaf(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(abjad.LilyPondLiteral("\\once \\tiny"), leaf)
+
+    def attach_last_leaf(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(abjad.LilyPondLiteral("\\endParenthesis"), leaf)
+        self.attach(leaf, novent)
+
+
+class OptionalSomePitches(Optional):
+    # optional that is only valid for particular pitches within one harmony
+
+    name = "optional_some_pitches"
+    attach_on_each_part = True
+    is_on_off_notation = False
+
+    def __init__(self, optional_pitch_indices: tuple):
+        self.optional_pitch_indices = optional_pitch_indices
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        size = 2
+        abjad.attach(
+            abjad.LilyPondLiteral(
+                "\\once \\override ParenthesesItem.font-size = #{}".format(size)
+            ),
+            leaf,
+        )
+        abjad.attach(
+            abjad.LilyPondLiteral("\\once \\override ParenthesesItem.padding = #0.05"),
+            leaf,
+        )
+
+        for note_idx, note_head in enumerate(leaf.note_heads):
+            if note_idx in self.optional_pitch_indices:
+                note_head.is_parenthesized = True
+                abjad.tweak(note_head).font_size = -2
+            else:
+                abjad.tweak(note_head).font_size = 0
+
+    def attach_middle_leaf(self, leaf: abjad.Chord, novent) -> None:
+        for note_idx, note_head in enumerate(leaf.note_heads):
+            if note_idx in self.optional_pitch_indices:
+                abjad.tweak(note_head).font_size = -2
+            else:
+                abjad.tweak(note_head).font_size = 0
 
 
 class Choose(Attachment):
     name = "choose"
-    attach_on_each_part = True
+    attach_on_each_part = False
     is_on_off_notation = False
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
@@ -65,7 +118,7 @@ class Choose(Attachment):
 
 class ChooseOne(Attachment):
     name = "choose"
-    attach_on_each_part = True
+    attach_on_each_part = False
     is_on_off_notation = False
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
@@ -234,6 +287,24 @@ class Markup(Attachment):
 
     def __init__(self, *args, **kwargs) -> None:
         self.abjad = abjad.Markup(*args, **kwargs)
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(self.abjad, leaf)
+
+
+class MarkupOnOff(Attachment):
+    name = "markup_on_off"
+    attach_on_each_part = False
+    is_on_off_notation = True
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.abjad = abjad.Markup(*args, **kwargs)
+
+    def __eq__(self, other) -> bool:
+        try:
+            return self.abjad == other.abjad
+        except AttributeError:
+            return False
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
         abjad.attach(self.abjad, leaf)

@@ -248,3 +248,18 @@ EKMELILY_PREAMBLE = """
   (-7/6 #xE2CA))
 
 """
+
+
+START_END_PARENTHESIS = r"""
+startParenthesis = {
+  \once \override ParenthesesItem.stencils = #(lambda (grob)
+        (let ((par-list (parentheses-item::calc-parenthesis-stencils grob)))
+          (list (car par-list) point-stencil )))
+}
+
+endParenthesis = {
+  \once \override ParenthesesItem.stencils = #(lambda (grob)
+        (let ((par-list (parentheses-item::calc-parenthesis-stencils grob)))
+          (list point-stencil (cadr par-list))))
+}
+"""

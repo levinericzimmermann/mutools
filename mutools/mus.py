@@ -157,6 +157,7 @@ class MusObject(object):
 
         with open(lily_name, "w") as f:
             f.write(lily.EKMELILY_PREAMBLE)
+            f.write(lily.START_END_PARENTHESIS)
             f.write(format(lf))
 
         return subprocess.Popen(
@@ -418,7 +419,26 @@ class TrackMaker(abc.ABC):
                 tempo.duration_to_milliseconds(d) / 1000
                 for d in (novent.delay, novent.duration)
             )
-            new_line.append(novent_copied)
+
+            # split novent in case it has an arpeggio
+            if novent_copied.arpeggio:
+                arpeggio_duration = 0.075
+                for p, delay in zip(
+                    sorted(novent_copied.pitch),
+                    tuple(arpeggio_duration for n in novent_copied.pitch[:-1])
+                    + (
+                        novent_copied.delay
+                        - ((len(novent_copied.pitch) - 1) * arpeggio_duration),
+                    ),
+                ):
+                    copied_again = novent_copied.copy()
+                    copied_again.pitch = [p]
+                    copied_again.delay = delay
+                    copied_again.duration = novent_copied.duration
+                    new_line.append(copied_again)
+
+            else:
+                new_line.append(novent_copied)
 
         return lily.NOventLine(new_line)
 
@@ -899,8 +919,23 @@ class TrackMaker(abc.ABC):
                 # attach isolated attachments
                 else:
                     if attachment.attach_on_each_part:
-                        for note in subnotes:
-                            attachment.attach(note, novent)
+
+                        # special treatment for optional attachment
+                        if (
+                            isinstance(attachment, attachments.Optional)
+                            and len(subnotes) > 1
+                        ):
+                            for note_idx, note in enumerate(subnotes):
+                                if note_idx == 0:
+                                    attachment.attach_first_leaf(note, novent)
+                                elif note_idx == len(subnotes) - 1:
+                                    attachment.attach_last_leaf(note, novent)
+                                else:
+                                    attachment.attach_middle_leaf(note, novent)
+
+                        else:
+                            for note in subnotes:
+                                attachment.attach(note, novent)
                     else:
                         attachment.attach(subnotes[0], novent)
 
