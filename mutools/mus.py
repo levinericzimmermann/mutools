@@ -859,6 +859,133 @@ class TrackMaker(abc.ABC):
 
         return tuple(subnotes)
 
+    @staticmethod
+    def _test_if_novent_has_short_eigenzeit(novent: lily.NOvent) -> bool:
+        test_if_note_has_short_eigenzeit = (
+            novent.string_contact_point == attachments.StringContactPoint("pizzicato"),
+            novent.articulation == attachments.Articulation("."),
+            novent.articulation_once == attachments.ArticulationOnce("."),
+        )
+        return any(test_if_note_has_short_eigenzeit)
+
+    @staticmethod
+    def _make_notes_from_novent(
+        absolute_novent_line: tuple,
+        ratio2pitchclass_dict: dict,
+        convert_mu_pitch2abjad_pitch_function,
+        absolute_bar_grid: tuple,
+        cautious_grid: tuple,
+        bar_grid: tuple,
+        grid: tuple,
+    ) -> tuple:
+        def make_note(
+            absolute_novent_line: tuple,
+            notes: tuple = tuple([]),
+            on_off_attachments: dict = {},
+            previous_duration: float = 0,
+        ):
+            if absolute_novent_line:
+                novent = absolute_novent_line[0]
+                absolute_novent_line = absolute_novent_line[1:]
+
+                # when adding glissando, the tone has to be seperated first and then each
+                # seperated part has to get seperated again by bar lines and grid lines
+
+                if novent.pitch:
+                    abjad_pitches = tuple(
+                        convert_mu_pitch2abjad_pitch_function(p, ratio2pitchclass_dict)
+                        for p in novent.pitch
+                    )
+
+                else:
+                    abjad_pitches = None
+
+                subdelays = TrackMaker._divide2subdelays(
+                    novent, cautious_grid, grid, bar_grid
+                )
+
+                # in case the note has a very short eigenzeit, it wouldn't make any sense
+                # to tie it several times.
+                has_note_short_eigenzeit = TrackMaker._test_if_novent_has_short_eigenzeit(
+                    novent
+                )
+                if has_note_short_eigenzeit:
+                    if len(subdelays) > 1:
+                        subdelays = subdelays[:1]
+
+                        start_of_next_event = novent.delay + subdelays[0]
+                        if absolute_novent_line and not absolute_novent_line[0].pitch:
+                            absolute_novent_line[0].delay = start_of_next_event
+
+                        else:
+                            new_rest = lily.NOvent(
+                                pitch=[],
+                                delay=start_of_next_event,
+                                duration=absolute_novent_line[0].delay,
+                            )
+                            absolute_novent_line = (new_rest,) + absolute_novent_line
+
+                subnotes = TrackMaker._make_subnotes(
+                    abjad_pitches, subdelays, previous_duration, absolute_bar_grid
+                )
+                previous_duration += sum(subdelays)
+
+                for attachment in filter(lambda at: bool(at), novent.attachments):
+
+                    # save on-off attachments and attach them later
+                    if attachment.is_on_off_notation:
+                        if attachment.name not in on_off_attachments:
+                            on_off_attachments.update({attachment.name: []})
+
+                        length_notes = len(notes)
+                        OFdata = (
+                            attachment,
+                            novent,
+                            (length_notes, length_notes + len(subnotes)),
+                        )
+
+                        on_off_attachments[attachment.name].append(OFdata)
+
+                    # attach isolated attachments
+                    else:
+                        if attachment.attach_on_each_part:
+
+                            # special treatment for optional attachment
+                            if (
+                                isinstance(attachment, attachments.Optional)
+                                and len(subnotes) > 1
+                            ):
+                                for note_idx, note in enumerate(subnotes):
+                                    if note_idx == 0:
+                                        attachment.attach_first_leaf(note, novent)
+                                    elif note_idx == len(subnotes) - 1:
+                                        attachment.attach_last_leaf(note, novent)
+                                    else:
+                                        attachment.attach_middle_leaf(note, novent)
+
+                            else:
+                                for note in subnotes:
+                                    attachment.attach(note, novent)
+                        else:
+                            attachment.attach(subnotes[0], novent)
+
+                # tie notes
+                if abjad_pitches is not None and len(subnotes) > 1:
+                    for note in subnotes[:-1]:
+                        abjad.attach(abjad.Tie(), note)
+
+                return make_note(
+                    absolute_novent_line,
+                    notes + subnotes,
+                    on_off_attachments,
+                    previous_duration,
+                )
+
+            else:
+                return notes, on_off_attachments
+
+        return make_note(tuple(absolute_novent_line))
+
     @classmethod
     def _convert_novent_line2abjad_staff(
         cls,
@@ -874,77 +1001,15 @@ class TrackMaker(abc.ABC):
         bar_grid, cautious_grid, grid = cls._mk_grids(time_signatures)
         absolute_bar_grid = tools.accumulate_from_zero(bar_grid)
 
-        notes = []
-
-        on_off_attachments = {}
-        previous_duration = 0
-
-        for novent in novent_line.convert2absolute():
-            # when adding glissando, the tone has to be seperated first and then each
-            # seperated part has to get seperated again by bar lines and grid lines
-
-            if novent.pitch:
-                abjad_pitches = tuple(
-                    convert_mu_pitch2abjad_pitch_function(p, ratio2pitchclass_dict)
-                    for p in novent.pitch
-                )
-
-            else:
-                abjad_pitches = None
-
-            subdelays = TrackMaker._divide2subdelays(
-                novent, cautious_grid, grid, bar_grid
-            )
-            subnotes = TrackMaker._make_subnotes(
-                abjad_pitches, subdelays, previous_duration, absolute_bar_grid
-            )
-            previous_duration += sum(subdelays)
-
-            for attachment in filter(lambda at: bool(at), novent.attachments):
-
-                # save on-off attachments and attach them later
-                if attachment.is_on_off_notation:
-                    if attachment.name not in on_off_attachments:
-                        on_off_attachments.update({attachment.name: []})
-
-                    length_notes = len(notes)
-                    OFdata = (
-                        attachment,
-                        novent,
-                        (length_notes, length_notes + len(subnotes)),
-                    )
-
-                    on_off_attachments[attachment.name].append(OFdata)
-
-                # attach isolated attachments
-                else:
-                    if attachment.attach_on_each_part:
-
-                        # special treatment for optional attachment
-                        if (
-                            isinstance(attachment, attachments.Optional)
-                            and len(subnotes) > 1
-                        ):
-                            for note_idx, note in enumerate(subnotes):
-                                if note_idx == 0:
-                                    attachment.attach_first_leaf(note, novent)
-                                elif note_idx == len(subnotes) - 1:
-                                    attachment.attach_last_leaf(note, novent)
-                                else:
-                                    attachment.attach_middle_leaf(note, novent)
-
-                        else:
-                            for note in subnotes:
-                                attachment.attach(note, novent)
-                    else:
-                        attachment.attach(subnotes[0], novent)
-
-            # tie notes
-            if abjad_pitches is not None and len(subnotes) > 1:
-                for note in subnotes[:-1]:
-                    abjad.attach(abjad.Tie(), note)
-
-            notes.extend(subnotes)
+        notes, on_off_attachments = cls._make_notes_from_novent(
+            novent_line.convert2absolute(),
+            ratio2pitchclass_dict,
+            convert_mu_pitch2abjad_pitch_function,
+            absolute_bar_grid,
+            cautious_grid,
+            bar_grid,
+            grid,
+        )
 
         TrackMaker._apply_beams(
             notes,

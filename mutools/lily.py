@@ -1,3 +1,5 @@
+import quicktions as fractions
+
 import abjad
 
 from mu.mel import ji
@@ -63,7 +65,7 @@ class NOventSet(object):
         self._novents = list(novent)
         self._size = size
 
-    def append(self, novent: NOvent) -> None:
+    def append(self, novent: NOvent, ignore_rests: bool = True) -> None:
         try:
             assert novent.delay < novent.duration
         except AssertionError:
@@ -72,7 +74,7 @@ class NOventSet(object):
             raise TypeError(msg)
 
         try:
-            assert not self.is_occupied(novent.delay, novent.duration)
+            assert not self.is_occupied(novent.delay, novent.duration, ignore_rests)
         except AssertionError:
             msg = "Position is already occupied!"
             raise ValueError(msg)
@@ -82,6 +84,10 @@ class NOventSet(object):
     @property
     def _sorted_novents(self) -> list:
         return sorted(self._novents, key=lambda novent: novent.delay)
+
+    @property
+    def size(self) -> fractions.Fraction:
+        return self._size
 
     @property
     def novent_line(self) -> NOventLine:
@@ -121,15 +127,46 @@ class NOventSet(object):
 
         return novent_line.convert2relative()
 
-    def is_occupied(self, start: float, end: float) -> bool:
+    def is_occupied(self, start: float, end: float, ignore_rests: bool = False) -> bool:
         for novent in self._novents:
-            if not (novent.duration <= start or end <= novent.delay):
-                return True
+            if not all((ignore_rests, not novent.pitch)):
+                if not (novent.duration <= start or end <= novent.delay):
+                    return True
 
         return False
 
     def __iter__(self) -> iter:
         return iter(self._sorted_novents)
+
+    def detect_undefined_areas(self, ignore_rests: bool = False) -> tuple:
+        sorted_novents = self._sorted_novents
+        if ignore_rests:
+            sorted_novents = tuple(novent for novent in sorted_novents if novent.pitch)
+
+        undefined_areas = []
+
+        if sorted_novents[0].delay != 0:
+            undefined_areas.append((0, fractions.Fraction(sorted_novents[0].delay)))
+
+        for novent0, novent1 in zip(sorted_novents, sorted_novents[1:]):
+            if novent0.duration != novent1.delay:
+                undefined_areas.append(
+                    (
+                        fractions.Fraction(novent0.duration),
+                        fractions.Fraction(novent1.delay),
+                    )
+                )
+
+        if self.size:
+            if sorted_novents[-1].duration < self.size:
+                undefined_areas.append(
+                    (
+                        fractions.Fraction(sorted_novents[-1].duration),
+                        fractions.Fraction(self.size),
+                    )
+                )
+
+        return tuple(undefined_areas)
 
 
 def mk_no_time_signature():
