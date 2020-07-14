@@ -272,7 +272,7 @@ class StringContactPoint(Attachment):
             return False
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
-        markup = self.abjad.markup.tiny()
+        markup = abjad.Markup(self.abjad.markup, direction="up").tiny()
         abjad.attach(markup, leaf)
 
 
@@ -343,6 +343,82 @@ class Fermata(Attachment):
 
     def __init__(self, command: str = "fermata") -> None:
         self.abjad = abjad.Fermata(command)
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(self.abjad, leaf)
+
+
+class _GlissandoAttachment(Attachment):
+    name = "__glissando_attachment"
+
+    @staticmethod
+    def _set_glissando_layout(
+        leaf, thickness: float = 2, minimum_length: float = 2.85
+    ) -> None:
+        abjad.attach(
+            abjad.LilyPondLiteral(
+                "\\once \\override Glissando.thickness = #'{}".format(thickness)
+            ),
+            leaf,
+        )
+        abjad.attach(
+            abjad.LilyPondLiteral(
+                "\\once \\override Glissando.minimum-length = #{}".format(
+                    minimum_length
+                )
+            ),
+            leaf,
+        )
+        cmd = "\\once \\override "
+        cmd += "Glissando.springs-and-rods = #ly:spanner::set-spacing-rods"
+        abjad.attach(abjad.LilyPondLiteral(cmd), leaf)
+
+
+class _GraceNotesAttachment(_GlissandoAttachment):
+    name = "__grace_notes_attachment"
+    attach_on_each_part = False
+    is_on_off_notation = False
+
+    @staticmethod
+    def _attach_grace_not_style(leaf) -> None:
+        abjad.attach(
+            abjad.LilyPondLiteral('\\once \\override Flag.stroke-style = #"grace"'),
+            leaf,
+        )
+
+
+class Acciaccatura(_GraceNotesAttachment):
+    name = "acciaccatura"
+    attach_on_each_part = False
+    is_on_off_notation = False
+
+    def __init__(self, abjad_note: abjad.Note, add_glissando: bool = False):
+        self.abjad = abjad_note
+        if add_glissando:
+            abjad.attach(abjad.GlissandoIndicator(), self.abjad)
+            self._set_glissando_layout(self.abjad, thickness=2, minimum_length=2.85)
+        self._attach_grace_not_style(self.abjad)
+        abjad.attach(abjad.LilyPondLiteral("\\acciaccatura"), self.abjad)
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(abjad.LilyPondLiteral(format(self.abjad)), leaf)
+
+
+class BeforeGraceContainer(_GraceNotesAttachment):
+    name = "before_grace_container"
+    attach_on_each_part = False
+    is_on_off_notation = False
+
+    def __init__(self, abjad_notes: tuple, add_glissando: bool = False) -> None:
+        self.abjad = abjad.BeforeGraceContainer(abjad_notes)
+
+        if add_glissando:
+            for item in self.abjad:
+                abjad.attach(abjad.GlissandoIndicator(), item)
+            self._set_glissando_layout(self.abjad, thickness=2, minimum_length=2.85)
+
+        self._attach_grace_not_style(self.abjad)
+        self.add_glissando = add_glissando
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
         abjad.attach(self.abjad, leaf)

@@ -250,6 +250,8 @@ class SegmentMaker(abc.ABC):
     _segment_class = Segment
 
     def __init__(self) -> None:
+        self._removed_areas = set([])
+
         for meta_track in self.orchestration:
             self.attach(**{meta_track: EmptyTrackMaker()})
 
@@ -258,6 +260,70 @@ class SegmentMaker(abc.ABC):
             meta_track: getattr(self, meta_track)() for meta_track in self.orchestration
         }
         return self._segment_class(self.orchestration, **tracks)
+
+    def remove_area(self, bar_idx0: int, bar_idx1: int) -> None:
+        # (1) first test if it is having any collision with already defined removed areas
+        for area in self.removed_areas:
+            try:
+                assert area[1] <= bar_idx0 or bar_idx1 <= area[0]
+            except AssertionError:
+                msg = "Can't remove area because new area is already occupied by "
+                msg += "remove_area {}".format(area)
+                raise ValueError(msg)
+
+        self._removed_areas.add((bar_idx0, bar_idx1))
+        for meta_track in self.orchestration:
+            self.attach(**{meta_track: getattr(self, meta_track)})
+
+    @property
+    def removed_areas(self) -> tuple:
+        """Return sorted form of removed areas.
+
+        The returned tuples contains several subtuples where each subtuple represents
+        one area that shall be removed.
+        """
+        return tuple(sorted(self._removed_areas, key=operator.itemgetter(0)))
+
+    @property
+    def used_areas(self) -> tuple:
+        available_bars = range(len(self.bars))
+        if self.removed_areas:
+            available_bars = set(available_bars)
+            for area in self.removed_areas:
+                available_bars = available_bars.difference(set(range(*area)))
+
+            sorted_available_bars = sorted(available_bars)
+            if sorted_available_bars:
+                differences_between_bar_indices = tuple(
+                    b - a
+                    for a, b in zip(sorted_available_bars, sorted_available_bars[1:])
+                )
+                used_areas = [[sorted_available_bars[0]]]
+                for position, difference_to_previous in zip(
+                    sorted_available_bars[1:], differences_between_bar_indices
+                ):
+                    if difference_to_previous == 1:
+                        used_areas[-1].append(position)
+                    else:
+                        used_areas.append([position])
+                used_areas = tuple((area[0], area[-1] + 1) for area in used_areas)
+                return tuple(sorted(used_areas, key=operator.itemgetter(0)))
+            else:
+                return tuple([])
+        else:
+            ab = tuple(available_bars)
+            return ((ab[0], ab[-1] + 1),)
+
+    @property
+    def translated_used_areas(self) -> tuple:
+        """Return sorted form of used areas with translated bar indices.
+        """
+        bar_positions = tools.accumulate_from_zero(
+            tuple(fractions.Fraction(b.duration) for b in self.bars)
+        )
+        return tuple(
+            tuple(bar_positions[idx] for idx in area) for area in self.used_areas
+        )
 
     @property
     def duration(self) -> abjad.Duration:
@@ -371,10 +437,55 @@ class TrackMaker(abc.ABC):
 
         return self._track_class(abjad_data, sound_engine)
 
+    @staticmethod
+    def _adapt_musdat_by_used_areas(
+        musdat: old.PolyLine, used_areas: tuple
+    ) -> old.PolyLine:
+        if used_areas:
+            new_polyline = old.PolyLine([])
+            for novent_line in musdat:
+                new_novent_line = lily.NOventLine([])
+                for area in used_areas:
+                    new_novent_line.extend(
+                        novent_line.cut_up_by_time(
+                            area[0], area[1], add_earlier=False, hard_cut=True
+                        )[:]
+                    )
+                new_polyline.append(new_novent_line)
+            return new_polyline
+
+        else:
+            return old.PolyLine([lily.NOventLine([]) for i in musdat])
+
+    @staticmethod
+    def _adapt_bars_by_used_areas(bars: tuple, used_areas: tuple) -> tuple:
+        if used_areas:
+            new_bars = []
+            for area in used_areas:
+                new_bars.extend(bars[area[0] : area[1]])
+
+            return tuple(new_bars)
+
+        else:
+            return tuple([])
+
+    def _prepare_staves(
+        self, polyline: old.PolyLine, segment_maker: SegmentMaker
+    ) -> old.PolyLine:
+        return polyline
+
     def attach(self, segment_maker: SegmentMaker, meta_track: MetaTrack) -> None:
-        self._bars = segment_maker.bars
+        self._bars = self._adapt_bars_by_used_areas(
+            segment_maker.bars, segment_maker.used_areas
+        )
         self._ratio2pitchclass_dict = segment_maker.ratio2pitchclass_dict
-        self._musdat = self.make_musdat(segment_maker, meta_track)
+        self._musdat = self._prepare_staves(
+            self._adapt_musdat_by_used_areas(
+                self.make_musdat(segment_maker, meta_track),
+                segment_maker.translated_used_areas,
+            ),
+            segment_maker,
+        )
 
         try:
             assert len(self._musdat) == meta_track.n_staves
@@ -665,7 +776,23 @@ class TrackMaker(abc.ABC):
         )
 
     @staticmethod
-    def _apply_beams(notes: abjad.Voice, absolute_grid: tuple = None) -> None:
+    def _attach_beams_on_subnotes(notes: abjad.Voice, idx0: int, idx1: int) -> None:
+        # test if any - non - rest item is in the group
+        add_beams = False
+        for n in notes[idx0:idx1]:
+            if type(n) not in (abjad.Rest, abjad.MultimeasureRest):
+                add_beams = True
+                break
+
+        if idx1 - idx0 < 2:
+            add_beams = False
+
+        if add_beams is True:
+            abjad.attach(abjad.StartBeam(), notes[idx0])
+            abjad.attach(abjad.StopBeam(), notes[idx1 - 1])
+
+    @staticmethod
+    def _find_beam_indices(notes: abjad.Voice, absolute_grid: tuple = None) -> None:
         durations = tuple(float(n.written_duration) for n in notes)
         absolute_durations = tools.accumulate_from_zero(durations)
 
@@ -689,35 +816,54 @@ class TrackMaker(abc.ABC):
                 beam_indices.append(idx)
                 current = pos
 
+        return tuple(beam_indices)
+
+    @staticmethod
+    def _apply_beams(notes: abjad.Voice, absolute_grid: tuple = None) -> None:
+
+        beam_indices = TrackMaker._find_beam_indices(notes, absolute_grid)
+
+        def test_if_item_is_unusable_for_beaming(item) -> bool:
+            return any(
+                (
+                    item.written_duration >= fractions.Fraction(1, 4),
+                    type(item) is abjad.MultimeasureRest,
+                )
+            )
+
         for idx0, idx1 in zip(beam_indices, beam_indices[1:]):
             if idx1 == beam_indices[-1]:
                 idx1 = len(notes)
 
-            add_beams = False
-            n_rests = 0
-            for n in notes[idx0:idx1]:
-                if type(n) not in (abjad.Rest, abjad.MultimeasureRest):
-                    add_beams = True
-                else:
-                    n_rests += 1
+            abjad_object_idx_pairs = tuple(
+                (notes[idx], idx) for idx in range(idx0, idx1)
+            )
+            abjad_object_idx_pairs_splitted_by_unusable_items = tools.split_iterable_by_function(
+                abjad_object_idx_pairs,
+                lambda pair: test_if_item_is_unusable_for_beaming(pair[0]),
+            )
 
-            if idx1 - idx0 < 2:
-                add_beams = False
+            for (
+                abjad_object_idx_pair_group
+            ) in abjad_object_idx_pairs_splitted_by_unusable_items:
 
-            n_notes_with_beams = 0
-            for n in notes[idx0:idx1]:
-                if n.written_duration < abjad.Duration(1, 4):
-                    n_notes_with_beams += 1
+                if test_if_item_is_unusable_for_beaming(
+                    abjad_object_idx_pair_group[-1][0]
+                ):
+                    abjad_object_idx_pair_group = abjad_object_idx_pair_group[:-1]
 
-            if n_notes_with_beams <= 1 and n_rests == 0:
-                add_beams = False
+                if abjad_object_idx_pair_group:
+                    idx0, idx1 = (
+                        abjad_object_idx_pair_group[0][1],
+                        abjad_object_idx_pair_group[-1][1] + 1,
+                    )
 
-            if add_beams is True:
-                abjad.attach(abjad.StartBeam(), notes[idx0])
-                abjad.attach(abjad.StopBeam(), notes[idx1 - 1])
+                    TrackMaker._attach_beams_on_subnotes(notes, idx0, idx1)
 
     @staticmethod
-    def _subdivide_by_measures(chords: list, time_signatures: tuple) -> list:
+    def _subdivide_by_measures(
+        chords: list, time_signatures: tuple, add_time_signatures: bool
+    ) -> list:
         time_signatures = iter(time_signatures)
 
         bars = []
@@ -731,7 +877,7 @@ class TrackMaker(abc.ABC):
         for chord in chords:
             if current_size >= current_ts.duration:
 
-                if last_ts != current_ts:
+                if last_ts != current_ts and add_time_signatures:
                     abjad.attach(current_ts, container[0])
 
                 bars.append(container)
@@ -817,6 +963,23 @@ class TrackMaker(abc.ABC):
             ),
             start,
         )
+
+        # make as many small grids as the smallest size of an beat
+        new_sub_delays = []
+        for sta, sto in zip(sub_delays, sub_delays[1:]):
+            smallest_beat = min((sta.denominator, sto.denominator))
+            if smallest_beat < 8:
+                gs = fractions.Fraction(1, smallest_beat)
+                n_times = sto // gs
+                local_grid = tuple(gs for _ in range(n_times))
+                seperated = TrackMaker._seperate_by_grid(sta, sto, local_grid)
+            else:
+                seperated = (sto - sta,)
+
+            new_sub_delays.extend(seperated)
+
+        sub_delays = tools.accumulate_from_n(new_sub_delays, start)
+
         sub_delays = functools.reduce(
             operator.add,
             tuple(
@@ -869,6 +1032,154 @@ class TrackMaker(abc.ABC):
         return any(test_if_note_has_short_eigenzeit)
 
     @staticmethod
+    def _process_attachments(
+        novent: lily.NOvent, notes: tuple, subnotes: tuple, on_off_attachments: dict
+    ) -> dict:
+        for attachment in filter(lambda at: bool(at), novent.attachments):
+
+            # save on-off attachments and attach them later
+            if attachment.is_on_off_notation:
+                if attachment.name not in on_off_attachments:
+                    on_off_attachments.update({attachment.name: []})
+
+                length_notes = len(notes)
+                OFdata = (
+                    attachment,
+                    novent,
+                    (length_notes, length_notes + len(subnotes)),
+                )
+
+                on_off_attachments[attachment.name].append(OFdata)
+
+            # attach isolated attachments
+            else:
+                if attachment.attach_on_each_part:
+
+                    # special treatment for optional attachment
+                    if (
+                        isinstance(attachment, attachments.Optional)
+                        and len(subnotes) > 1
+                    ):
+                        for note_idx, note in enumerate(subnotes):
+                            if note_idx == 0:
+                                attachment.attach_first_leaf(note, novent)
+                            elif note_idx == len(subnotes) - 1:
+                                attachment.attach_last_leaf(note, novent)
+                            else:
+                                attachment.attach_middle_leaf(note, novent)
+
+                    else:
+                        for note in subnotes:
+                            attachment.attach(note, novent)
+                else:
+                    attachment.attach(subnotes[0], novent)
+
+    @staticmethod
+    def _adjust_novent_line_by_eigenzeit(
+        subdelays: tuple, absolute_novent_line: tuple, novent: lily.NOvent,
+    ):
+        # in case the note has a very short eigenzeit, it wouldn't make any sense
+        # to tie it several times.
+        has_note_short_eigenzeit = TrackMaker._test_if_novent_has_short_eigenzeit(
+            novent
+        )
+        if has_note_short_eigenzeit:
+            if len(subdelays) > 1:
+                subdelays = subdelays[:1]
+
+                start_of_next_event = novent.delay + subdelays[0]
+                if absolute_novent_line and not absolute_novent_line[0].pitch:
+                    absolute_novent_line[0].delay = start_of_next_event
+
+                else:
+                    new_rest = lily.NOvent(
+                        pitch=[],
+                        delay=start_of_next_event,
+                        duration=absolute_novent_line[0].delay,
+                    )
+                    absolute_novent_line = (new_rest,) + absolute_novent_line
+
+        return subdelays, absolute_novent_line
+
+    @staticmethod
+    def _split_novent_by_glissando(absolute_novent: lily.NOvent) -> tuple:
+        if absolute_novent.glissando:
+
+            copied_novents = []
+            start = absolute_novent.delay
+            for pi in absolute_novent.glissando.pitch_line:
+                cn = absolute_novent.copy()
+                cn.glissando = None
+                cn.pitch = [p + pi.pitch for p in absolute_novent.pitch]
+                cn.delay = start
+                end = start + pi.delay
+                cn.duration = end
+
+                if (
+                    pi.delay == 0
+                    and pi.pitch == absolute_novent.glissando.pitch_line[-2].pitch
+                ):
+                    copied_novents.append(None)
+
+                else:
+                    copied_novents.append(cn)
+
+                start = end
+
+            return tuple(copied_novents)
+
+        else:
+            return (absolute_novent, None)
+
+    @staticmethod
+    def _process_glissando_notes(
+        glissando_subnotes_container: list,
+        last_novent: lily.NOvent,
+        convert_mu_pitch2abjad_pitch_function,
+        ratio2pitchclass_dict,
+    ) -> tuple:
+        if len(glissando_subnotes_container) == 1 and last_novent is None:
+            return glissando_subnotes_container[0]
+
+        else:
+            is_first = True
+            for glissando_subnotes in reversed(glissando_subnotes_container):
+                attach_gliss = True
+                if is_first:
+                    # only attach glissando spanner to last subnote in case there will be
+                    # an afterGrace note.
+                    if last_novent is None:
+                        attach_gliss = False
+                    is_first = False
+                if attach_gliss:
+                    abjad.attach(abjad.GlissandoIndicator(), glissando_subnotes[-1])
+
+            resulting_subnotes = functools.reduce(
+                operator.add, glissando_subnotes_container
+            )
+            abjad.attach(abjad.StartSlur(), resulting_subnotes[0])
+
+            if last_novent is not None:
+                last_chord_abjad_pitches = tuple(
+                    convert_mu_pitch2abjad_pitch_function(p, ratio2pitchclass_dict)
+                    for p in last_novent.pitch
+                )
+                obj = abjad.Chord(last_chord_abjad_pitches, fractions.Fraction(1, 16))
+                abjad.attach(
+                    abjad.LilyPondLiteral(
+                        '\\once \\override Flag.stroke-style = #"grace"'
+                    ),
+                    obj,
+                )
+                abjad.attach(abjad.StopSlur(), obj)
+                abjad.attach(abjad.AfterGraceContainer([obj]), resulting_subnotes[-1])
+
+            else:
+                abjad.attach(abjad.StopSlur(), resulting_subnotes[-1])
+
+            return tuple(resulting_subnotes)
+
+    @staticmethod
     def _make_notes_from_novent(
         absolute_novent_line: tuple,
         ratio2pitchclass_dict: dict,
@@ -885,98 +1196,69 @@ class TrackMaker(abc.ABC):
             previous_duration: float = 0,
         ):
             if absolute_novent_line:
-                novent = absolute_novent_line[0]
+                super_novent = absolute_novent_line[0]
                 absolute_novent_line = absolute_novent_line[1:]
 
                 # when adding glissando, the tone has to be seperated first and then each
                 # seperated part has to get seperated again by bar lines and grid lines
 
-                if novent.pitch:
-                    abjad_pitches = tuple(
-                        convert_mu_pitch2abjad_pitch_function(p, ratio2pitchclass_dict)
-                        for p in novent.pitch
-                    )
-
-                else:
-                    abjad_pitches = None
-
-                subdelays = TrackMaker._divide2subdelays(
-                    novent, cautious_grid, grid, bar_grid
+                novent_splitted_by_glissando = TrackMaker._split_novent_by_glissando(
+                    super_novent
                 )
 
-                # in case the note has a very short eigenzeit, it wouldn't make any sense
-                # to tie it several times.
-                has_note_short_eigenzeit = TrackMaker._test_if_novent_has_short_eigenzeit(
-                    novent
-                )
-                if has_note_short_eigenzeit:
-                    if len(subdelays) > 1:
-                        subdelays = subdelays[:1]
+                glissando_subnotes_container = []
 
-                        start_of_next_event = novent.delay + subdelays[0]
-                        if absolute_novent_line and not absolute_novent_line[0].pitch:
-                            absolute_novent_line[0].delay = start_of_next_event
+                for novent in novent_splitted_by_glissando[:-1]:
 
-                        else:
-                            new_rest = lily.NOvent(
-                                pitch=[],
-                                delay=start_of_next_event,
-                                duration=absolute_novent_line[0].delay,
+                    if novent.pitch:
+                        abjad_pitches = tuple(
+                            convert_mu_pitch2abjad_pitch_function(
+                                p, ratio2pitchclass_dict
                             )
-                            absolute_novent_line = (new_rest,) + absolute_novent_line
-
-                subnotes = TrackMaker._make_subnotes(
-                    abjad_pitches, subdelays, previous_duration, absolute_bar_grid
-                )
-                previous_duration += sum(subdelays)
-
-                for attachment in filter(lambda at: bool(at), novent.attachments):
-
-                    # save on-off attachments and attach them later
-                    if attachment.is_on_off_notation:
-                        if attachment.name not in on_off_attachments:
-                            on_off_attachments.update({attachment.name: []})
-
-                        length_notes = len(notes)
-                        OFdata = (
-                            attachment,
-                            novent,
-                            (length_notes, length_notes + len(subnotes)),
+                            for p in novent.pitch
                         )
 
-                        on_off_attachments[attachment.name].append(OFdata)
-
-                    # attach isolated attachments
                     else:
-                        if attachment.attach_on_each_part:
+                        abjad_pitches = None
 
-                            # special treatment for optional attachment
-                            if (
-                                isinstance(attachment, attachments.Optional)
-                                and len(subnotes) > 1
-                            ):
-                                for note_idx, note in enumerate(subnotes):
-                                    if note_idx == 0:
-                                        attachment.attach_first_leaf(note, novent)
-                                    elif note_idx == len(subnotes) - 1:
-                                        attachment.attach_last_leaf(note, novent)
-                                    else:
-                                        attachment.attach_middle_leaf(note, novent)
+                    subdelays = TrackMaker._divide2subdelays(
+                        novent, cautious_grid, grid, bar_grid
+                    )
 
-                            else:
-                                for note in subnotes:
-                                    attachment.attach(note, novent)
-                        else:
-                            attachment.attach(subnotes[0], novent)
+                    (
+                        subdelays,
+                        absolute_novent_line,
+                    ) = TrackMaker._adjust_novent_line_by_eigenzeit(
+                        subdelays, absolute_novent_line, novent
+                    )
 
-                # tie notes
-                if abjad_pitches is not None and len(subnotes) > 1:
-                    for note in subnotes[:-1]:
-                        abjad.attach(abjad.Tie(), note)
+                    subnotes = TrackMaker._make_subnotes(
+                        abjad_pitches, subdelays, previous_duration, absolute_bar_grid
+                    )
+                    previous_duration += sum(subdelays)
+
+                    # make attachments
+                    TrackMaker._process_attachments(
+                        novent, notes, subnotes, on_off_attachments
+                    )
+
+                    # tie notes
+                    if abjad_pitches is not None and len(subnotes) > 1:
+                        for note in subnotes[:-1]:
+                            abjad.attach(abjad.Tie(), note)
+
+                    glissando_subnotes_container.append(subnotes)
+
+                processed_subnotes = TrackMaker._process_glissando_notes(
+                    glissando_subnotes_container,
+                    novent_splitted_by_glissando[-1],
+                    convert_mu_pitch2abjad_pitch_function,
+                    ratio2pitchclass_dict,
+                )
 
                 return make_note(
                     absolute_novent_line,
-                    notes + subnotes,
+                    notes + processed_subnotes,
                     on_off_attachments,
                     previous_duration,
                 )
@@ -993,6 +1275,7 @@ class TrackMaker(abc.ABC):
         time_signatures: tuple,
         ratio2pitchclass_dict: dict = None,
         convert_mu_pitch2abjad_pitch_function=None,
+        add_time_signatures: bool = True,
     ) -> abjad.Staff:
 
         if not convert_mu_pitch2abjad_pitch_function:
@@ -1019,7 +1302,11 @@ class TrackMaker(abc.ABC):
         )
         TrackMaker._attach_on_off_attachments(notes, on_off_attachments)
 
-        staff = abjad.Staff(TrackMaker._subdivide_by_measures(notes, time_signatures))
+        staff = abjad.Staff(
+            TrackMaker._subdivide_by_measures(
+                notes, time_signatures, add_time_signatures
+            )
+        )
         abjad.setting(staff).auto_beaming = False
         abjad.attach(abjad.LilyPondLiteral("\\numericTimeSignature"), staff[0][0])
 
