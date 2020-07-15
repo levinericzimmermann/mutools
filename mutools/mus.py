@@ -16,6 +16,7 @@ import crosstrainer
 
 from mu.mel import ji
 from mu.sco import old
+from mu.utils import interpolations
 from mu.utils import tools
 
 from mutools import attachments
@@ -251,6 +252,7 @@ class SegmentMaker(abc.ABC):
 
     def __init__(self) -> None:
         self._removed_areas = set([])
+        self._repeated_areas = set([])
 
         for meta_track in self.orchestration:
             self.attach(**{meta_track: EmptyTrackMaker()})
@@ -261,16 +263,28 @@ class SegmentMaker(abc.ABC):
         }
         return self._segment_class(self.orchestration, **tracks)
 
-    def remove_area(self, bar_idx0: int, bar_idx1: int) -> None:
-        # (1) first test if it is having any collision with already defined removed areas
-        for area in self.removed_areas:
+    @staticmethod
+    def _test_if_area_is_overlapping(
+        bar_idx0: int, bar_idx1: int, known_areas: tuple
+    ) -> None:
+        for area in known_areas:
             try:
                 assert area[1] <= bar_idx0 or bar_idx1 <= area[0]
             except AssertionError:
-                msg = "Can't remove area because new area is already occupied by "
-                msg += "remove_area {}".format(area)
+                msg = "Can't add area because new area is already occupied by "
+                msg += "{}".format(area)
                 raise ValueError(msg)
 
+    def repeat_area(self, bar_idx0: int, bar_idx1: int) -> None:
+        # (1) first test if it is having any collision with already defined removed areas
+        self._test_if_area_is_overlapping(bar_idx0, bar_idx1, self.repeated_areas)
+        self._repeated_areas.add((bar_idx0, bar_idx1))
+        for meta_track in self.orchestration:
+            self.attach(**{meta_track: getattr(self, meta_track)})
+
+    def remove_area(self, bar_idx0: int, bar_idx1: int) -> None:
+        # (1) first test if it is having any collision with already defined removed areas
+        self._test_if_area_is_overlapping(bar_idx0, bar_idx1, self.removed_areas)
         self._removed_areas.add((bar_idx0, bar_idx1))
         for meta_track in self.orchestration:
             self.attach(**{meta_track: getattr(self, meta_track)})
@@ -283,6 +297,15 @@ class SegmentMaker(abc.ABC):
         one area that shall be removed.
         """
         return tuple(sorted(self._removed_areas, key=operator.itemgetter(0)))
+
+    @property
+    def repeated_areas(self) -> tuple:
+        """Return sorted form of repeated areas.
+
+        The returned tuples contains several subtuples where each subtuple represents
+        one area that shall be repeated.
+        """
+        return tuple(sorted(self._repeated_areas, key=operator.itemgetter(0)))
 
     @property
     def used_areas(self) -> tuple:
@@ -425,7 +448,7 @@ class TrackMaker(abc.ABC):
         for line in self.musdat:
             staves.append(
                 self._convert_novent_line2abjad_staff(
-                    line, self.bars, self.ratio2pitchclass_dict
+                    line, self.bars, self.ratio2pitchclass_dict, self.repeated_areas
                 )
             )
 
@@ -478,6 +501,7 @@ class TrackMaker(abc.ABC):
         self._bars = self._adapt_bars_by_used_areas(
             segment_maker.bars, segment_maker.used_areas
         )
+        self._repeated_areas = segment_maker.repeated_areas
         self._ratio2pitchclass_dict = segment_maker.ratio2pitchclass_dict
         self._musdat = self._prepare_staves(
             self._adapt_musdat_by_used_areas(
@@ -498,6 +522,11 @@ class TrackMaker(abc.ABC):
 
     @property
     @_not_attached_yet
+    def repeated_areas(self) -> tuple:
+        return self._repeated_areas
+
+    @property
+    @_not_attached_yet
     def musdat(self) -> old.PolyLine:
         return self._musdat
 
@@ -513,13 +542,54 @@ class TrackMaker(abc.ABC):
 
     # GENERAL NOTATION / ABJAD - CONVERSION - METHODS #
 
-    @staticmethod
+    def _unfold_repetitions(self, novent_line: lily.NOventLine) -> lily.NOventLine:
+        if self.repeated_areas:
+            areas = []
+            if self.repeated_areas[0][0] != 0:
+                areas.append((0, self.repeated_areas[0][0], False))
+
+            for area0, area1 in zip(
+                self.repeated_areas, self.repeated_areas[1:] + ((len(self.bars), None),)
+            ):
+                areas.append(area0 + (True,))
+                difference = area1[0] - area0[1]
+                if difference > 0:
+                    areas.append((area0[1], area1[0], False))
+
+            new_novent_line = []
+
+            absolute_bars = tools.accumulate_from_zero(
+                tuple(fractions.Fraction(b.duration) for b in self.bars)
+            )
+
+            for area in areas:
+                start_idx, stop_idx, is_repeated = area
+                start, stop = (absolute_bars[idx] for idx in (start_idx, stop_idx))
+                cut_line = novent_line.cut_up_by_time(
+                    start, stop, add_earlier=False, hard_cut=True
+                )
+                n_times = int(is_repeated) + 1
+                for _ in range(n_times):
+                    for novent in cut_line:
+                        new_novent_line.append(novent)
+
+            return lily.NOventLine(new_novent_line)
+
+        else:
+            return novent_line
+
     def _convert_symbolic_novent_line2asterisked_novent_line(
-        novent_line: lily.NOventLine,
+        self, novent_line: lily.NOventLine,
     ) -> lily.NOventLine:
+
+        novent_line = self._unfold_repetitions(novent_line)
+
+        acciaccatura_duration = 0.21
+
         new_line = []
 
         tempo = abjad.MetronomeMark((1, 4), 60)
+
         for novent in novent_line:
             novent_copied = novent.copy()
 
@@ -530,6 +600,19 @@ class TrackMaker(abc.ABC):
                 tempo.duration_to_milliseconds(d) / 1000
                 for d in (novent.delay, novent.duration)
             )
+
+            if novent_copied.glissando:
+                novent_copied.glissando = old.GlissandoLine(
+                    interpolations.InterpolationLine(
+                        [
+                            old.PitchInterpolation(
+                                tempo.duration_to_milliseconds(pi.delay) / 1000,
+                                pi.pitch,
+                            )
+                            for pi in novent.glissando.pitch_line
+                        ]
+                    )
+                )
 
             # split novent in case it has an arpeggio
             if novent_copied.arpeggio:
@@ -547,6 +630,66 @@ class TrackMaker(abc.ABC):
                     copied_again.delay = delay
                     copied_again.duration = novent_copied.duration
                     new_line.append(copied_again)
+
+            elif novent_copied.acciaccatura:
+                if novent_copied.acciaccatura.add_glissando:
+                    pitch_difference = (
+                        novent_copied.acciaccatura.mu_pitches[0]
+                        - novent_copied.pitch[0]
+                    )
+
+                    if novent_copied.glissando:
+                        msg = "Can't combine glissando with acciaccatura yet. Sorry!"
+                        raise NotImplementedError(msg)
+
+                    else:
+                        novent_copied.glissando = old.GlissandoLine(
+                            interpolations.InterpolationLine(
+                                [
+                                    old.PitchInterpolation(
+                                        acciaccatura_duration, pitch_difference
+                                    ),
+                                    old.PitchInterpolation(
+                                        novent_copied.delay - acciaccatura_duration,
+                                        ji.r(1, 1),
+                                    ),
+                                    old.PitchInterpolation(0, ji.r(1, 1),),
+                                ]
+                            )
+                        )
+
+                    new_line.append(novent_copied)
+
+                else:
+                    novent_copied.delay -= acciaccatura_duration
+                    novent_copied.duration -= acciaccatura_duration
+
+                    acciaccatura_novent = lily.NOvent(
+                        pitch=novent_copied.acciaccatura.mu_pitches,
+                        delay=acciaccatura_duration,
+                        duration=acciaccatura_duration,
+                    )
+
+                    if (
+                        novent_copied.string_contact_point
+                        == attachments.StringContactPoint("pizzicato")
+                    ):
+                        acciaccatura_novent.string_contact_point = attachments.StringContactPoint(
+                            "pizzicato"
+                        )
+
+                        # make duration shorter
+                        new_acciaccatura_duration = 0.15
+                        acciaccatura_duration_diff = (
+                            acciaccatura_novent.delay - new_acciaccatura_duration
+                        )
+                        novent_copied.delay += acciaccatura_duration_diff
+                        novent_copied.duration += acciaccatura_duration_diff
+                        acciaccatura_novent.delay = new_acciaccatura_duration
+                        acciaccatura_novent.duration = new_acciaccatura_duration
+
+                    new_line.append(acciaccatura_novent)
+                    new_line.append(novent_copied)
 
             else:
                 new_line.append(novent_copied)
@@ -968,11 +1111,12 @@ class TrackMaker(abc.ABC):
         new_sub_delays = []
         for sta, sto in zip(sub_delays, sub_delays[1:]):
             smallest_beat = min((sta.denominator, sto.denominator))
-            if smallest_beat < 8:
-                gs = fractions.Fraction(1, smallest_beat)
+            if smallest_beat > 8:
+                gs = fractions.Fraction(1, smallest_beat // 2)
                 n_times = sto // gs
                 local_grid = tuple(gs for _ in range(n_times))
                 seperated = TrackMaker._seperate_by_grid(sta, sto, local_grid)
+
             else:
                 seperated = (sto - sta,)
 
@@ -1132,6 +1276,28 @@ class TrackMaker(abc.ABC):
             return (absolute_novent, None)
 
     @staticmethod
+    def _set_glissando_layout(
+        leaf, thickness: float = 2, minimum_length: float = 2.85
+    ) -> None:
+        abjad.attach(
+            abjad.LilyPondLiteral(
+                "\\once \\override Glissando.thickness = #'{}".format(thickness)
+            ),
+            leaf,
+        )
+        abjad.attach(
+            abjad.LilyPondLiteral(
+                "\\once \\override Glissando.minimum-length = #{}".format(
+                    minimum_length
+                )
+            ),
+            leaf,
+        )
+        cmd = "\\once \\override "
+        cmd += "Glissando.springs-and-rods = #ly:spanner::set-spacing-rods"
+        abjad.attach(abjad.LilyPondLiteral(cmd), leaf)
+
+    @staticmethod
     def _process_glissando_notes(
         glissando_subnotes_container: list,
         last_novent: lily.NOvent,
@@ -1142,17 +1308,33 @@ class TrackMaker(abc.ABC):
             return glissando_subnotes_container[0]
 
         else:
-            is_first = True
-            for glissando_subnotes in reversed(glissando_subnotes_container):
+            for glissando_subnotes, next_glissando_subnotes in zip(
+                glissando_subnotes_container, glissando_subnotes_container[1:] + [None],
+            ):
                 attach_gliss = True
-                if is_first:
+                attach_tie = False
+                if next_glissando_subnotes is None:
                     # only attach glissando spanner to last subnote in case there will be
                     # an afterGrace note.
                     if last_novent is None:
                         attach_gliss = False
-                    is_first = False
+
+                else:
+                    if (
+                        glissando_subnotes[-1].note_heads[0].written_pitch.number
+                        == next_glissando_subnotes[0].note_heads[0].written_pitch.number
+                    ):
+                        attach_gliss = False
+                        attach_tie = True
+
                 if attach_gliss:
+                    TrackMaker._set_glissando_layout(
+                        glissando_subnotes[-1], thickness=2.25, minimum_length=3.5
+                    )
                     abjad.attach(abjad.GlissandoIndicator(), glissando_subnotes[-1])
+
+                elif attach_tie:
+                    abjad.attach(abjad.Tie(), glissando_subnotes[-1])
 
             resulting_subnotes = functools.reduce(
                 operator.add, glissando_subnotes_container
@@ -1268,12 +1450,25 @@ class TrackMaker(abc.ABC):
 
         return make_note(tuple(absolute_novent_line))
 
+    @staticmethod
+    def _attach_repetitions_signs(staff: abjad.Staff, repeated_areas: tuple) -> None:
+        for area in repeated_areas:
+            start, stop = area
+            abjad.attach(abjad.BarLine(".|:", format_slot="before"), staff[start][0])
+            try:
+                abjad.attach(abjad.BarLine(":|.", format_slot="before"), staff[stop][0])
+            except IndexError:
+                abjad.attach(
+                    abjad.BarLine(":|.", format_slot="after"), staff[stop - 1][-1]
+                )
+
     @classmethod
     def _convert_novent_line2abjad_staff(
         cls,
         novent_line: lily.NOventLine,
         time_signatures: tuple,
         ratio2pitchclass_dict: dict = None,
+        repeated_areas: tuple = tuple([]),
         convert_mu_pitch2abjad_pitch_function=None,
         add_time_signatures: bool = True,
     ) -> abjad.Staff:
@@ -1307,6 +1502,9 @@ class TrackMaker(abc.ABC):
                 notes, time_signatures, add_time_signatures
             )
         )
+
+        TrackMaker._attach_repetitions_signs(staff, repeated_areas)
+
         abjad.setting(staff).auto_beaming = False
         abjad.attach(abjad.LilyPondLiteral("\\numericTimeSignature"), staff[0][0])
 

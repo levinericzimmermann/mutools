@@ -392,11 +392,15 @@ class Acciaccatura(_GraceNotesAttachment):
     attach_on_each_part = False
     is_on_off_notation = False
 
-    def __init__(self, abjad_note: abjad.Note, add_glissando: bool = False):
+    def __init__(
+        self, mu_pitches: list, abjad_note: abjad.Note, add_glissando: bool = False
+    ):
+        self.add_glissando = add_glissando
+        self.mu_pitches = mu_pitches
         self.abjad = abjad_note
         if add_glissando:
             abjad.attach(abjad.GlissandoIndicator(), self.abjad)
-            self._set_glissando_layout(self.abjad, thickness=2, minimum_length=2.85)
+            self._set_glissando_layout(self.abjad, thickness=2, minimum_length=4.85)
         self._attach_grace_not_style(self.abjad)
         abjad.attach(abjad.LilyPondLiteral("\\acciaccatura"), self.abjad)
 
