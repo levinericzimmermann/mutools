@@ -24,7 +24,7 @@ from mutools import lily
 from mutools import synthesis
 
 
-STANDARD_RESOLUTION = 500
+STANDARD_RESOLUTION = 600
 
 
 def _check_for_double_names(iterable: tuple) -> None:
@@ -119,7 +119,25 @@ class Orchestration(object):
         return len(self.__tracks)
 
 
+class PaperFormat(object):
+    def __init__(self, name: str, height: float, width: float):
+        self.name = name
+        self.height = height
+        self.width = width
+
+
+A4 = PaperFormat("a4", 210, 297)
+A3 = PaperFormat("a3", 297, 420)
+A2 = PaperFormat("a2", 420, 594)
+
+
 class MusObject(object):
+    write2png = False
+    format = A3
+    margin = 4
+    # global_staff_size = 22.45
+    global_staff_size = 19
+
     def __init__(self, resolution: int = None):
         if resolution is None:
             resolution = STANDARD_RESOLUTION
@@ -127,21 +145,45 @@ class MusObject(object):
         self._tmp_name = ".track_{}".format(uuid.uuid4().hex)
         self.resolution = resolution
 
+    def _make_score_block(self) -> abjad.Block:
+        score_block = abjad.Block("score")
+        score_block.items.append(self.score)
+        return score_block
+
     def _make_lilypond_file(self) -> abjad.LilyPondFile:
+        paper_block = abjad.Block("paper")
         layout_block = abjad.Block("layout")
-        layout_block.items.append(r"indent = 0\mm")
-        layout_block.items.append(r"line-width = 550\mm")
+
+        layout_block.items.append(r"indent = {}\mm".format(self.margin))
+        layout_block.items.append(r"short-indent = {}\mm".format(self.margin))
+
+        if self.write2png:
+            layout_block.items.append(
+                r"line-width = {}\mm".format(self.format.width - (2 * self.margin))
+            )
+        else:
+            paper_block.items.append(
+                r'#(set-paper-size "{}")'.format(self.format.name)
+            )
+
         layout_block.items.append(r"ragged-last = ##f")
         layout_block.items.append(r"ragged-right = ##f")
 
-        score_block = abjad.Block("score")
-        score_block.items.append(self.score)
+        score_block = self._make_score_block()
+
+        header_block = abjad.Block("header")
+
+        header_block.items.append("tagline = ##f")
+
+        includes = []
+        if self.write2png:
+            includes.append("lilypond-book-preamble.ly")
 
         return abjad.LilyPondFile(
             lilypond_version_token=abjad.LilyPondVersionToken("2.19.83"),
-            global_staff_size=22.45,
-            includes=["lilypond-book-preamble.ly"],
-            items=[layout_block, score_block],
+            global_staff_size=self.global_staff_size,
+            includes=includes,
+            items=[paper_block, layout_block, header_block, score_block],
         )
 
     @abc.abstractproperty
@@ -152,8 +194,7 @@ class MusObject(object):
     def score(self) -> abjad.Score:
         raise NotImplementedError
 
-    def notate(self, name: str) -> subprocess.Popen:
-        lf = self._make_lilypond_file()
+    def _notate(self, name: str, lf: abjad.LilyPondFile) -> subprocess.Popen:
         lily_name = "{}.ly".format(name)
 
         with open(lily_name, "w") as f:
@@ -161,22 +202,34 @@ class MusObject(object):
             f.write(lily.START_END_PARENTHESIS)
             f.write(format(lf))
 
-        return subprocess.Popen(
-            [
-                "lilypond",
-                "--png",
-                "-dresolution={}".format(self.resolution),
-                "-o{}".format(name),
-                lily_name,
-            ]
-        )
+        cmd = [
+            "lilypond",
+        ]
+        if self.write2png:
+            cmd.extend(["--png", "-dresolution={}".format(self.resolution)])
+
+        cmd.extend(["-o{}".format(name), lily_name])
+
+        return subprocess.Popen(cmd)
+
+    def notate(self, name: str) -> subprocess.Popen:
+        return self._notate(name, self._make_lilypond_file())
 
     def synthesize(self, name: str) -> subprocess.Popen:
         return self.sound_engine.render(name)
 
+    @property
+    def ending(self) -> str:
+        if self.write2png:
+            return "png"
+        else:
+            return "pdf"
+
     def show(self) -> None:
         self.notate(self._tmp_name).wait()
-        subprocess.Popen(["xdg-open", "{}.png".format(self._tmp_name)]).wait()
+        subprocess.Popen(
+            ["xdg-open", "{}.{}".format(self._tmp_name, self.ending)]
+        ).wait()
         time.sleep(3)
         for ending in (
             ".ly",
@@ -339,8 +392,7 @@ class SegmentMaker(abc.ABC):
 
     @property
     def translated_used_areas(self) -> tuple:
-        """Return sorted form of used areas with translated bar indices.
-        """
+        """Return sorted form of used areas with translated bar indices."""
         bar_positions = tools.accumulate_from_zero(
             tuple(fractions.Fraction(b.duration) for b in self.bars)
         )
@@ -584,8 +636,6 @@ class TrackMaker(abc.ABC):
 
         novent_line = self._unfold_repetitions(novent_line)
 
-        acciaccatura_duration = 0.21
-
         new_line = []
 
         tempo = abjad.MetronomeMark((1, 4), 60)
@@ -632,6 +682,7 @@ class TrackMaker(abc.ABC):
                     new_line.append(copied_again)
 
             elif novent_copied.acciaccatura:
+                acciaccatura_duration = 0.21
                 if novent_copied.acciaccatura.add_glissando:
                     pitch_difference = (
                         novent_copied.acciaccatura.mu_pitches[0]
@@ -643,6 +694,10 @@ class TrackMaker(abc.ABC):
                         raise NotImplementedError(msg)
 
                     else:
+                        acciaccatura_duration = 0.35
+                        if acciaccatura_duration > novent_copied.duration:
+                            acciaccatura_duration = novent_copied.duration * 0.3
+
                         novent_copied.glissando = old.GlissandoLine(
                             interpolations.InterpolationLine(
                                 [

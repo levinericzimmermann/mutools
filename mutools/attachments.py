@@ -118,6 +118,17 @@ class OptionalSomePitches(Optional):
                 abjad.tweak(note_head).font_size = 0
 
 
+class BartokPizzicato(Attachment):
+    name = "bartok_pizzicato"
+    attach_on_each_part = False
+    is_on_off_notation = False
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(
+            abjad.LilyPondLiteral("\\snappizzicato", format_slot="absolute_after"), leaf
+        )
+
+
 class Choose(Attachment):
     name = "choose"
     attach_on_each_part = False
@@ -146,7 +157,9 @@ class Tremolo(Attachment):
     is_on_off_notation = False
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
-        abjad.attach(abjad.StemTremolo(32), leaf)
+        abjad.attach(
+            abjad.StemTremolo(32 * (2 ** leaf.written_duration.flag_count)), leaf
+        )
 
 
 class Articulation(Attachment):
@@ -398,14 +411,21 @@ class Acciaccatura(_GraceNotesAttachment):
         self.add_glissando = add_glissando
         self.mu_pitches = mu_pitches
         self.abjad = abjad_note
-        if add_glissando:
-            abjad.attach(abjad.GlissandoIndicator(), self.abjad)
-            self._set_glissando_layout(self.abjad, thickness=2, minimum_length=4.85)
-        self._attach_grace_not_style(self.abjad)
-        abjad.attach(abjad.LilyPondLiteral("\\acciaccatura"), self.abjad)
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
-        abjad.attach(abjad.LilyPondLiteral(format(self.abjad)), leaf)
+        note = abjad.Note(
+            abjad.NamedPitch(
+                name=self.abjad.written_pitch.pitch_class.name,
+                octave=self.abjad.written_pitch.octave.number,
+            ),
+            abjad.Duration(self.abjad.written_duration),
+        )
+        if self.add_glissando:
+            abjad.attach(abjad.GlissandoIndicator(), note)
+            self._set_glissando_layout(self.abjad, thickness=2, minimum_length=4.85)
+        self._attach_grace_not_style(note)
+        abjad.attach(abjad.LilyPondLiteral("\\acciaccatura"), note)
+        abjad.attach(abjad.LilyPondLiteral(format(note)), leaf)
 
 
 class BeforeGraceContainer(_GraceNotesAttachment):
@@ -449,6 +469,15 @@ class Arpeggio(Attachment):
         self.abjad = abjad.Arpeggio(direction=direction)
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
+        # hack for avoiding too short arpeggios,
+        # see https://code.google.com/archive/p/lilypond/issues/794
+        abjad.attach(
+            abjad.LilyPondLiteral(
+                "\\once \\override Arpeggio #'positions = #(lambda (grob)"
+                + " (interval-widen (ly:arpeggio::calc-positions grob) 0.5))"
+            ),
+            leaf,
+        )
         abjad.attach(self.abjad, leaf)
 
 
@@ -459,6 +488,24 @@ class Clef(Attachment):
 
     def __init__(self, name: str) -> None:
         self.abjad = abjad.Clef(name)
+
+    def __eq__(self, other) -> bool:
+        try:
+            return self.abjad == other.abjad
+        except AttributeError:
+            return False
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(self.abjad, leaf)
+
+
+class Ottava(Attachment):
+    name = "ottava"
+    attach_on_each_part = False
+    is_on_off_notation = True
+
+    def __init__(self, n: int) -> None:
+        self.abjad = abjad.Ottava(n, format_slot="before")
 
     def __eq__(self, other) -> bool:
         try:
