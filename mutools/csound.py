@@ -9,8 +9,9 @@ def render_csound(
     sco_name: str,
     print_output: bool = False,
     remove_files: bool = True,
+    sr: int = 96000
 ) -> subprocess.Popen:
-    cmd = ["csound", "--format=double", "-k 96000", "-r 96000"]
+    cmd = ["csound", "--format=double", "-k {}".format(sr), "-r {}".format(sr)]
 
     if print_output is False:
         cmd.append("-O null")

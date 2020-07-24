@@ -27,6 +27,7 @@ class SoundEngine(abc.ABC):
 class BasedCsoundEngine(SoundEngine):
     print_output = False
     remove_files = True
+    sr = 96000
 
     @abc.abstractmethod
     def cname(self) -> str:
@@ -55,7 +56,58 @@ class BasedCsoundEngine(SoundEngine):
             sco_name,
             print_output=self.print_output,
             remove_files=self.remove_files,
+            sr=self.sr,
         )
+
+
+class SimpleCsoundSinePlayer(BasedCsoundEngine):
+    cname = ".simple_sine"
+
+    default_volume = 0.7
+    concert_pitch = 260
+    tail = 1
+
+    def __init__(self, melody: old.Melody):
+        self._melody = melody
+
+    @property
+    def orc(self) -> str:
+        lines = [
+            "0dbfs=1",
+            "gaSendL, gaSendR init 0",
+            "nchnls=1\n",
+            "instr 1",
+            "kvol linseg 0, 0.1, 1, p3 - 0.2, 1, 0.1, 0",
+            "asig poscil3 kvol * p5, p4",
+            "gaSendL  =        gaSendL + asig/3",
+            "gaSendR  =        gaSendR + asig/3",
+            "out asig",
+            "endin\n",
+            "instr 100",
+            "aRvbL, aRvbR reverbsc gaSendL,gaSendR,0.6,7000",
+            "out     (aRvbL + aRvbR) * 0.15",
+            "clear    gaSendL,gaSendR",
+            "endin\n",
+        ]
+        return "\n".join(lines)
+
+    @property
+    def sco(self) -> str:
+        lines = ["i100 0 {}".format(float(self._melody.duration) + self.tail)]
+        for tone, tone_rel in zip(self._melody.convert2absolute(), self._melody):
+            if not tone.pitch.is_empty:
+                volume = tone.volume
+                if not volume:
+                    volume = self.default_volume
+                lines.append(
+                    "i1 {} {} {} {}".format(
+                        float(tone.delay),
+                        float(tone_rel.duration),
+                        float(tone.pitch) * self.concert_pitch,
+                        volume,
+                    )
+                )
+        return "\n".join(lines)
 
 
 class SilenceEngine(BasedCsoundEngine):
@@ -253,10 +305,10 @@ class CsoundEngine(SoundEngine):
 class SampleEngine(CsoundEngine):
     """pitch2sample has to be a dict with the following structure:
 
-        {pitch0: CYCLE((SAMPLE_NAME, PITCH_FACTOR), (SAMPLE_NAME, PITCH_FACTOR), ...),
-         pitch1: CYCLE((SAMPLE_NAME, PITCH_FACTOR), ...),
-         ...
-         pitchN: CYCLE((SAMPLE_NAME, PITCH_FACTOR), ...)}
+    {pitch0: CYCLE((SAMPLE_NAME, PITCH_FACTOR), (SAMPLE_NAME, PITCH_FACTOR), ...),
+     pitch1: CYCLE((SAMPLE_NAME, PITCH_FACTOR), ...),
+     ...
+     pitchN: CYCLE((SAMPLE_NAME, PITCH_FACTOR), ...)}
     """
 
     def __init__(self, pitch2sample: dict) -> None:

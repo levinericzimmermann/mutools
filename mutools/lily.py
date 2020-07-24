@@ -1,3 +1,12 @@
+"""This module contains small functions that may help to generate scores with abjad.
+
+The main focus are functions that may help to convert algorithmically generated abstract
+musical data to a form thats closer to notation (where suddenly questions about
+time signature, beams, ties and accidentals are occuring).
+"""
+
+import subprocess
+
 import quicktions as fractions
 
 import abjad
@@ -7,13 +16,6 @@ from mu.sco import old
 from mu.utils import tools
 
 from . import attachments
-
-"""This module contains small functions that may help to generate scores with abjad.
-
-The main focus are functions that may help to convert algorithmically generated abstract
-musical data to a form thats closer to notation (where suddenly questions about
-time signature, beams, ties and accidentals are occuring).
-"""
 
 
 class NOvent(old.Ovent):
@@ -170,7 +172,9 @@ class NOventSet(object):
 
 
 def mk_no_time_signature():
-    return abjad.LilyPondLiteral("override Score.TimeSignature.stencil = ##f", "before")
+    return abjad.LilyPondLiteral(
+        "\\override Score.TimeSignature.stencil = ##f", "before"
+    )
 
 
 def mk_numeric_ts() -> abjad.LilyPondLiteral:
@@ -195,44 +199,6 @@ def mk_bar_line() -> abjad.LilyPondLiteral:
     return abjad.LilyPondLiteral('bar "|"', "after")
 
 
-"""
-def convert_abjad_pitches_and_mu_rhythms2abjad_notes(
-    harmonies: list, delays: list, grid
-) -> list:
-    leading_pulses = grid.leading_pulses
-    absolute_leading_pulses = tuple(itertools.accumulate([0] + list(leading_pulses)))
-    converted_delays = grid.apply_delay(delays)
-    absolute_delays = tuple(itertools.accumulate([0] + list(converted_delays)))
-    # 1. generate notes
-    notes = abjad.Measure(abjad.TimeSignature(grid.absolute_meter), [])
-    resulting_durations = []
-    for harmony, delay, start, end in zip(
-        harmonies, converted_delays, absolute_delays, absolute_delays[1:]
-    ):
-        subnotes = abjad.Voice()
-        seperated_by_grid = seperate_by_grid(
-            delay, start, end, absolute_leading_pulses, leading_pulses, grid
-        )
-        assert sum(seperated_by_grid) == delay
-        for d in seperated_by_grid:
-            seperated_by_assignable = seperate_by_assignability(d, grid)
-            assert sum(seperated_by_assignable) == d
-            for assignable in seperated_by_assignable:
-                resulting_durations.append(assignable)
-                if harmony:
-                    chord = abjad.Chord(harmony, abjad.Duration(assignable))
-                else:
-                    chord = abjad.Rest(abjad.Duration(assignable))
-                subnotes.append(chord)
-        if len(subnotes) > 1 and len(harmony) > 0:
-            abjad.attach(abjad.Tie(), subnotes[:])
-        notes.extend(subnotes)
-    assert sum(resulting_durations) == sum(converted_delays)
-    # 2. apply beams
-    return apply_beams(notes, resulting_durations, absolute_leading_pulses)
-"""
-
-
 def round_scale_index_to_12th_tone(index: float) -> float:
     # round to 12th tone
     ct = round(index * 6) / 6
@@ -247,6 +213,7 @@ def round_cents_to_12th_tone(cents: float) -> float:
 def convert2abjad_pitch(
     pitch: ji.JIPitch, ratio2pitchclass_dict: dict
 ) -> abjad.NamedPitch:
+    """Simple function to convert mu.mel.JIPitch to abjad.NamedPitch"""
     octave = pitch.octave + 4
     pitch_class = ratio2pitchclass_dict[pitch.register(0)]
 
@@ -255,6 +222,60 @@ def convert2abjad_pitch(
         octave += 1
 
     return abjad.NamedPitch(pitch_class, octave=octave)
+
+
+def make_small_example(
+    score: abjad.Score,
+    path: str,
+    size: float = None,
+    staff_size: float = 20,
+    resolution: int = 500,
+    header_block=abjad.Block("header"),
+) -> subprocess.Popen:
+    includes = ["lilypond-book-preamble.ly"]
+
+    score_block = abjad.Block("score")
+    score_block.items.append(score)
+
+    layout_block = abjad.Block("layout")
+    layout_block.items.append(r"indent = 0\mm")
+    layout_block.items.append(r"short-indent = 0\mm")
+    layout_block.items.append(r"ragged-last = ##f")
+    layout_block.items.append(r"ragged-right = ##f")
+
+    lilypond_file = abjad.LilyPondFile(
+        lilypond_version_token=abjad.LilyPondVersionToken(LILYPOND_VERSION),
+        global_staff_size=staff_size,
+        includes=includes,
+        items=[layout_block, header_block, score_block],
+    )
+    write_lily_file(lilypond_file, path)
+    return render_lily_file(
+        path, write2png=True, resolution=resolution, output_name=path
+    )
+
+
+def write_lily_file(lilypond_file: abjad.LilyPondFile, path: str) -> None:
+    with open("{}.ly".format(path), "w") as f:
+        f.write(EKMELILY_PREAMBLE)
+        f.write(START_END_PARENTHESIS)
+        f.write(format(lilypond_file))
+
+
+def render_lily_file(
+    lilyfile_path: str,
+    write2png: bool = False,
+    resolution: int = 500,
+    output_name: str = None,
+) -> subprocess.Popen:
+    cmd = ["lilypond"]
+    if write2png:
+        cmd.extend(["--png", "-dresolution={}".format(resolution)])
+    if output_name:
+        cmd.append("-o{}".format(output_name))
+    cmd.append("{}.ly".format(lilyfile_path))
+
+    return subprocess.Popen(cmd)
 
 
 EKMELILY_PREAMBLE = """
@@ -283,7 +304,6 @@ EKMELILY_PREAMBLE = """
   (-11/12 #xE2C5)
   (-13/12 #xE2C0)
   (-7/6 #xE2CA))
-
 """
 
 
@@ -300,3 +320,6 @@ endParenthesis = {
           (list point-stencil (cadr par-list))))
 }
 """
+
+
+LILYPOND_VERSION = "2.19.83"

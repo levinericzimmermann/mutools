@@ -162,9 +162,7 @@ class MusObject(object):
                 r"line-width = {}\mm".format(self.format.width - (2 * self.margin))
             )
         else:
-            paper_block.items.append(
-                r'#(set-paper-size "{}")'.format(self.format.name)
-            )
+            paper_block.items.append(r'#(set-paper-size "{}")'.format(self.format.name))
 
         layout_block.items.append(r"ragged-last = ##f")
         layout_block.items.append(r"ragged-right = ##f")
@@ -195,22 +193,10 @@ class MusObject(object):
         raise NotImplementedError
 
     def _notate(self, name: str, lf: abjad.LilyPondFile) -> subprocess.Popen:
-        lily_name = "{}.ly".format(name)
-
-        with open(lily_name, "w") as f:
-            f.write(lily.EKMELILY_PREAMBLE)
-            f.write(lily.START_END_PARENTHESIS)
-            f.write(format(lf))
-
-        cmd = [
-            "lilypond",
-        ]
-        if self.write2png:
-            cmd.extend(["--png", "-dresolution={}".format(self.resolution)])
-
-        cmd.extend(["-o{}".format(name), lily_name])
-
-        return subprocess.Popen(cmd)
+        lily.write_lily_file(lf, name)
+        return lily.render_lily_file(
+            name, write2png=self.write2png, resolution=self.resolution
+        )
 
     def notate(self, name: str) -> subprocess.Popen:
         return self._notate(name, self._make_lilypond_file())
