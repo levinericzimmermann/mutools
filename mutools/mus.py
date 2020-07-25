@@ -195,7 +195,7 @@ class MusObject(object):
     def _notate(self, name: str, lf: abjad.LilyPondFile) -> subprocess.Popen:
         lily.write_lily_file(lf, name)
         return lily.render_lily_file(
-            name, write2png=self.write2png, resolution=self.resolution
+            name, write2png=self.write2png, resolution=self.resolution, output_name=name
         )
 
     def notate(self, name: str) -> subprocess.Popen:
@@ -1093,6 +1093,12 @@ class TrackMaker(abc.ABC):
                 tests = (
                     attachment != previous_attachment,
                     previous_attachment != attachments.Hauptstimme(True, True),
+                    # ignore writing arco if it starts with arco (default case that
+                    # doesn't need to be notated)
+                    not (
+                        attachment == attachments.StringContactPoint("arco")
+                        and previous_attachment is None
+                    ),
                 )
                 if all(tests):
 
@@ -1118,6 +1124,7 @@ class TrackMaker(abc.ABC):
                             idx = subnotes_positions[0]
 
                         attachment.attach(notes[idx], novent)
+
                 previous_attachment = attachment
 
     @staticmethod
@@ -1370,7 +1377,7 @@ class TrackMaker(abc.ABC):
 
                 if attach_gliss:
                     TrackMaker._set_glissando_layout(
-                        glissando_subnotes[-1], thickness=2.25, minimum_length=3.5
+                        glissando_subnotes[-1], thickness=2.25, minimum_length=4.5
                     )
                     abjad.attach(abjad.GlissandoIndicator(), glissando_subnotes[-1])
 

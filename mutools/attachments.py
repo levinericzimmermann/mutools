@@ -1,6 +1,6 @@
 import abc
-import math
 import inspect
+import math
 import sys
 
 import abjad
@@ -196,6 +196,18 @@ class ArticulationOnce(Attachment):
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
         abjad.attach(self.abjad, leaf)
+
+
+class NaturalHarmonic(Attachment):
+    name = "natural_harmonic"
+    attach_on_each_part = False
+    is_on_off_notation = False
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(
+            abjad.LilyPondLiteral("\\flageolet", directed="up", format_slot="after"),
+            leaf,
+        )
 
 
 class ArtificalHarmonic(Attachment):
@@ -420,9 +432,11 @@ class Acciaccatura(_GraceNotesAttachment):
             ),
             abjad.Duration(self.abjad.written_duration),
         )
+
         if self.add_glissando:
             abjad.attach(abjad.GlissandoIndicator(), note)
-            self._set_glissando_layout(self.abjad, thickness=2, minimum_length=4.85)
+            self._set_glissando_layout(note, thickness=2, minimum_length=3.85)
+
         self._attach_grace_not_style(note)
         abjad.attach(abjad.LilyPondLiteral("\\acciaccatura"), note)
         abjad.attach(abjad.LilyPondLiteral(format(note)), leaf)
