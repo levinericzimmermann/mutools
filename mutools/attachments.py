@@ -167,7 +167,7 @@ class Articulation(Attachment):
     attach_on_each_part = True
     is_on_off_notation = False
 
-    def __init__(self, name: str, direction: str = None) -> None:
+    def __init__(self, name: str, direction: str = 'up') -> None:
         self.abjad = abjad.Articulation(name, direction=direction)
 
     def __eq__(self, other) -> bool:
@@ -185,7 +185,7 @@ class ArticulationOnce(Attachment):
     attach_on_each_part = False
     is_on_off_notation = False
 
-    def __init__(self, name: str, direction: str = None) -> None:
+    def __init__(self, name: str, direction: str = 'up') -> None:
         self.abjad = abjad.Articulation(name, direction=direction)
 
     def __eq__(self, other) -> bool:
@@ -427,13 +427,7 @@ class Acciaccatura(_GraceNotesAttachment):
         self.glissando_thickness = 2
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
-        note = abjad.Note(
-            abjad.NamedPitch(
-                name=self.abjad.written_pitch.pitch_class.name,
-                octave=self.abjad.written_pitch.octave.number,
-            ),
-            abjad.Duration(self.abjad.written_duration),
-        )
+        note = abjad.mutate(self.abjad).copy()
 
         if self.add_glissando:
             abjad.attach(abjad.GlissandoIndicator(), note)
@@ -444,7 +438,10 @@ class Acciaccatura(_GraceNotesAttachment):
             )
 
         self._attach_grace_not_style(note)
-        abjad.attach(abjad.LilyPondLiteral("\\acciaccatura"), note)
+        if abs(note.written_pitch.number - leaf.note_heads[0].written_pitch.number) > 8:
+            abjad.attach(abjad.LilyPondLiteral("\\grace"), note)
+        else:
+            abjad.attach(abjad.LilyPondLiteral("\\acciaccatura"), note)
         abjad.attach(abjad.LilyPondLiteral(format(note)), leaf)
 
 

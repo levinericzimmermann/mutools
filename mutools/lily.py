@@ -278,6 +278,29 @@ def render_lily_file(
     return subprocess.Popen(cmd)
 
 
+def attach_empty_grace_note_at_beggining_of_every_bar(staff: abjad.Staff) -> None:
+    """Workaround for lilypond bug"""
+
+    for bar in staff:
+        add_invisible_grace_note = True
+        for attached_item in abjad.inspect(bar[0]).indicators():
+            tests = (
+                type(attached_item) == abjad.LilyPondLiteral
+                and (
+                    "acciaccatura" in attached_item.argument
+                    or "grace" in attached_item.argument
+                ),
+                type(attached_item) == abjad.BeforeGraceContainer,
+            )
+            if any(tests):
+                add_invisible_grace_note = False
+
+        if add_invisible_grace_note:
+            abjad.attach(
+                abjad.LilyPondLiteral("\\grace s8"), bar[0],
+            )
+
+
 EKMELILY_PREAMBLE = """
 \\include "ekmel.ily"
 \\language "english"

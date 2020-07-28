@@ -14,6 +14,7 @@ import abjad
 
 import crosstrainer
 
+from mu.mel.abstract import AbstractPitch
 from mu.mel import ji
 from mu.sco import old
 from mu.utils import interpolations
@@ -136,7 +137,11 @@ class MusObject(object):
     format = A3
     margin = 4
     # global_staff_size = 22.45
-    global_staff_size = 19
+    global_staff_size = 20
+    lilypond_version = "2.19.83"
+    base_shortest_duration = None
+    common_shortest_duration = None
+    shortest_duration_space = None
 
     def __init__(self, resolution: int = None):
         if resolution is None:
@@ -150,38 +155,82 @@ class MusObject(object):
         score_block.items.append(self.score)
         return score_block
 
-    def _make_lilypond_file(self) -> abjad.LilyPondFile:
+    @staticmethod
+    def _make_any_lilypond_file(
+        score_block: abjad.Block,
+        write2png: bool,
+        global_staff_size: float,
+        margin: float,
+        paper_format: PaperFormat,
+        lilypond_version: str,
+        includes: list = [],
+        base_shortest_duration: fractions.Fraction = None,
+        common_shortest_duration: fractions.Fraction = None,
+        shortest_duration_space: float = None,
+    ) -> abjad.LilyPondFile:
         paper_block = abjad.Block("paper")
         layout_block = abjad.Block("layout")
 
-        layout_block.items.append(r"indent = {}\mm".format(self.margin))
-        layout_block.items.append(r"short-indent = {}\mm".format(self.margin))
-
-        if self.write2png:
-            layout_block.items.append(
-                r"line-width = {}\mm".format(self.format.width - (2 * self.margin))
-            )
-        else:
-            paper_block.items.append(r'#(set-paper-size "{}")'.format(self.format.name))
-
+        layout_block.items.append(r"indent = {}\mm".format(margin))
+        layout_block.items.append(r"short-indent = {}\mm".format(margin))
         layout_block.items.append(r"ragged-last = ##f")
         layout_block.items.append(r"ragged-right = ##f")
 
-        score_block = self._make_score_block()
+        if write2png:
+            layout_block.items.append(
+                r"line-width = {}\mm".format(paper_format.width - (2 * margin))
+            )
+        else:
+            paper_block.items.append(
+                r'#(set-paper-size "{}")'.format(paper_format.name)
+            )
+
+        if base_shortest_duration or shortest_duration_space or common_shortest_duration:
+            vspacing = "\\context {\n        \\Score\n"
+            if base_shortest_duration:
+                vspacing += "        "
+                vspacing += "\\override SpacingSpanner.base-shortest-duration = "
+                vspacing += "#(ly:make-moment {}/{}) \n".format(
+                    base_shortest_duration.numerator, base_shortest_duration.denominator
+                )
+            if common_shortest_duration:
+                vspacing += "        "
+                vspacing += "\\override SpacingSpanner.common-shortest-duration = "
+                vspacing += "#(ly:make-moment {}/{}) \n".format(
+                    common_shortest_duration.numerator, common_shortest_duration.denominator
+                )
+            if shortest_duration_space:
+                vspacing += "        "
+                vspacing += "\\override SpacingSpanner.shortest-duration-space = "
+                vspacing += "{}\n".format(shortest_duration_space)
+            vspacing += "    }"
+            layout_block.items.append(vspacing)
 
         header_block = abjad.Block("header")
 
         header_block.items.append("tagline = ##f")
 
-        includes = []
-        if self.write2png:
+        if write2png:
             includes.append("lilypond-book-preamble.ly")
 
         return abjad.LilyPondFile(
-            lilypond_version_token=abjad.LilyPondVersionToken("2.19.83"),
-            global_staff_size=self.global_staff_size,
+            lilypond_version_token=abjad.LilyPondVersionToken(lilypond_version),
+            global_staff_size=global_staff_size,
             includes=includes,
             items=[paper_block, layout_block, header_block, score_block],
+        )
+
+    def _make_lilypond_file(self) -> abjad.LilyPondFile:
+        return self._make_any_lilypond_file(
+            self._make_score_block(),
+            self.write2png,
+            self.global_staff_size,
+            self.margin,
+            self.format,
+            self.lilypond_version,
+            base_shortest_duration=self.base_shortest_duration,
+            common_shortest_duration=self.common_shortest_duration,
+            shortest_duration_space=self.shortest_duration_space,
         )
 
     @abc.abstractproperty
@@ -464,6 +513,8 @@ class TrackMaker(abc.ABC):
         abjad.TimeSignature((10, 8)): fractions.Fraction(5, 8),
     }
 
+    write_true_repetition = False
+
     @abc.abstractmethod
     def make_musdat(
         self, segment_maker: SegmentMaker, meta_track: MetaTrack
@@ -486,7 +537,11 @@ class TrackMaker(abc.ABC):
         for line in self.musdat:
             staves.append(
                 self._convert_novent_line2abjad_staff(
-                    line, self.bars, self.ratio2pitchclass_dict, self.repeated_areas
+                    line,
+                    self.bars,
+                    self.ratio2pitchclass_dict,
+                    self.repeated_areas,
+                    write_true_repetition=self.write_true_repetition,
                 )
             )
 
@@ -1062,6 +1117,7 @@ class TrackMaker(abc.ABC):
             if current_size >= current_ts.duration:
 
                 if last_ts != current_ts and add_time_signatures:
+                    TrackMaker._attach_empty_grace_note(container[0])
                     abjad.attach(current_ts, container[0])
 
                 bars.append(container)
@@ -1077,11 +1133,35 @@ class TrackMaker(abc.ABC):
 
         if container:
             bars.append(container)
+            TrackMaker._attach_empty_grace_note(container[0])
             if current_size >= current_ts.duration:
-                if last_ts != current_ts:
+                if last_ts != current_ts and add_time_signatures:
                     abjad.attach(current_ts, container[0])
 
         return bars
+
+    @staticmethod
+    def _attach_empty_grace_note(leaf: abjad.Chord) -> None:
+        add_invisible_grace_note = True
+        for attached_item in abjad.inspect(leaf).indicators():
+            tests = (
+                type(attached_item) == abjad.LilyPondLiteral
+                and (
+                    "acciaccatura" in attached_item.argument
+                    or "grace" in attached_item.argument
+                ),
+                type(attached_item) == abjad.BeforeGraceContainer,
+            )
+            if any(tests):
+                add_invisible_grace_note = False
+
+        if add_invisible_grace_note:
+            abjad.attach(
+                abjad.LilyPondLiteral("\\grace s8"), leaf
+            )
+            # abjad.attach(
+            #     abjad.BeforeGraceContainer("s8"), leaf
+            # )
 
     @staticmethod
     def _attach_on_off_attachments(notes: list, on_off_attachments: dict) -> None:
@@ -1268,7 +1348,10 @@ class TrackMaker(abc.ABC):
 
     @staticmethod
     def _adjust_novent_line_by_eigenzeit(
-        subdelays: tuple, absolute_novent_line: tuple, novent: lily.NOvent,
+        subdelays: tuple,
+        absolute_novent_line: tuple,
+        novent: lily.NOvent,
+        abjad_pitches_iter: iter,
     ):
         # in case the note has a very short eigenzeit, it wouldn't make any sense
         # to tie it several times.
@@ -1290,8 +1373,9 @@ class TrackMaker(abc.ABC):
                         duration=absolute_novent_line[0].delay,
                     )
                     absolute_novent_line = (new_rest,) + absolute_novent_line
+                    abjad_pitches_iter = iter((tuple([]),) + tuple(abjad_pitches_iter))
 
-        return subdelays, absolute_novent_line
+        return subdelays, absolute_novent_line, abjad_pitches_iter
 
     @staticmethod
     def _split_novent_by_glissando(absolute_novent: lily.NOvent) -> tuple:
@@ -1299,24 +1383,28 @@ class TrackMaker(abc.ABC):
 
             copied_novents = []
             start = absolute_novent.delay
-            for pi in absolute_novent.glissando.pitch_line:
-                cn = absolute_novent.copy()
-                cn.glissando = None
-                cn.pitch = [p + pi.pitch for p in absolute_novent.pitch]
-                cn.delay = start
-                end = start + pi.delay
-                cn.duration = end
+            n_items = len(absolute_novent.glissando.pitch_line) - 1
+            for idx, pi in enumerate(absolute_novent.glissando.pitch_line):
+                # ignore pitch interpolation events with zero duration if they are not on
+                # the last beat
+                if not (idx != n_items and pi.delay == 0):
+                    cn = absolute_novent.copy()
+                    cn.glissando = None
+                    cn.pitch = [p + pi.pitch for p in absolute_novent.pitch]
+                    cn.delay = start
+                    end = start + pi.delay
+                    cn.duration = end
 
-                if (
-                    pi.delay == 0
-                    and pi.pitch == absolute_novent.glissando.pitch_line[-2].pitch
-                ):
-                    copied_novents.append(None)
+                    if (
+                        pi.delay == 0
+                        and pi.pitch == absolute_novent.glissando.pitch_line[-2].pitch
+                    ):
+                        copied_novents.append(None)
 
-                else:
-                    copied_novents.append(cn)
+                    else:
+                        copied_novents.append(cn)
 
-                start = end
+                    start = end
 
             return tuple(copied_novents)
 
@@ -1329,19 +1417,19 @@ class TrackMaker(abc.ABC):
     ) -> None:
         abjad.attach(
             abjad.LilyPondLiteral(
-                "\\once \\override Glissando.thickness = #'{}".format(thickness)
+                "\\override Glissando.thickness = #'{}".format(thickness)
             ),
             leaf,
         )
         abjad.attach(
             abjad.LilyPondLiteral(
-                "\\once \\override Glissando.minimum-length = #{}".format(
+                "\\override Glissando.minimum-length = #{}".format(
                     minimum_length
                 )
             ),
             leaf,
         )
-        cmd = "\\once \\override "
+        cmd = "\\override "
         cmd += "Glissando.springs-and-rods = #ly:spanner::set-spacing-rods"
         abjad.attach(abjad.LilyPondLiteral(cmd), leaf)
 
@@ -1349,8 +1437,8 @@ class TrackMaker(abc.ABC):
     def _process_glissando_notes(
         glissando_subnotes_container: list,
         last_novent: lily.NOvent,
-        convert_mu_pitch2abjad_pitch_function,
-        ratio2pitchclass_dict,
+        abjad_pitches_iter: iter,
+        following_novents: list,
     ) -> tuple:
         if len(glissando_subnotes_container) == 1 and last_novent is None:
             return glissando_subnotes_container[0]
@@ -1376,9 +1464,6 @@ class TrackMaker(abc.ABC):
                         attach_tie = True
 
                 if attach_gliss:
-                    TrackMaker._set_glissando_layout(
-                        glissando_subnotes[-1], thickness=2.25, minimum_length=4.5
-                    )
                     abjad.attach(abjad.GlissandoIndicator(), glissando_subnotes[-1])
 
                 elif attach_tie:
@@ -1387,31 +1472,179 @@ class TrackMaker(abc.ABC):
             resulting_subnotes = functools.reduce(
                 operator.add, glissando_subnotes_container
             )
-            abjad.attach(abjad.StartSlur(), resulting_subnotes[0])
+
+            has_stop_slur_been_added = False
 
             if last_novent is not None:
-                last_chord_abjad_pitches = tuple(
-                    convert_mu_pitch2abjad_pitch_function(p, ratio2pitchclass_dict)
-                    for p in last_novent.pitch
-                )
-                obj = abjad.Chord(last_chord_abjad_pitches, fractions.Fraction(1, 16))
-                abjad.attach(
-                    abjad.LilyPondLiteral(
-                        '\\once \\override Flag.stroke-style = #"grace"'
-                    ),
-                    obj,
-                )
-                abjad.attach(abjad.StopSlur(), obj)
-                abjad.attach(abjad.AfterGraceContainer([obj]), resulting_subnotes[-1])
 
-            else:
-                abjad.attach(abjad.StopSlur(), resulting_subnotes[-1])
+                last_chord_abjad_pitches = next(abjad_pitches_iter)
+
+                if not (
+                    following_novents
+                    and following_novents[0].acciaccatura is None
+                    and following_novents[0].pitch
+                    and all(
+                        tuple(
+                            p in following_novents[0].pitch for p in last_novent.pitch
+                        )
+                    )
+                ):
+                    obj = abjad.Chord(
+                        last_chord_abjad_pitches, fractions.Fraction(1, 8)
+                    )
+                    abjad.attach(
+                        abjad.LilyPondLiteral(
+                            '\\once \\override Flag.stroke-style = #"grace"'
+                        ),
+                        obj,
+                    )
+                    abjad.attach(abjad.StopSlur(), obj)
+                    abjad.attach(
+                        abjad.AfterGraceContainer([obj]), resulting_subnotes[-1]
+                    )
+                    has_stop_slur_been_added = True
+
+            if has_stop_slur_been_added or len(glissando_subnotes_container) > 2:
+                abjad.attach(abjad.StartSlur(), resulting_subnotes[0])
+                if not has_stop_slur_been_added:
+                    abjad.attach(abjad.StopSlur(), resulting_subnotes[-1])
 
             return tuple(resulting_subnotes)
 
     @staticmethod
-    def _make_notes_from_novent(
+    def _simplify_accidentals(
+        abjad_pitches_per_item: tuple, prefered: str = "flats"
+    ) -> tuple:
+        def detect_different_versions_of_pitch(pitch: abjad.NamedPitch) -> tuple:
+            pitch = pitch.simplify()
+            versions = (pitch._respell_with_flats(), pitch._respell_with_sharps())
+            if prefered != "flats":
+                versions = tuple(reversed(versions))
+
+            if versions[0].name == versions[1].name:
+                versions = (versions[0],)
+
+            if pitch.pitch_class.number == 0:
+                versions += (
+                    abjad.NamedPitch(name="bs", octave=pitch.octave.number - 1),
+                )
+
+            elif pitch.pitch_class.number == 5:
+                versions += (abjad.NamedPitch(name="es", octave=pitch.octave.number),)
+
+            elif pitch.pitch_class.number == 11:
+                versions += (
+                    abjad.NamedPitch(name="cf", octave=pitch.octave.number + 1),
+                )
+
+            elif pitch.pitch_class.number == 4:
+                versions += (abjad.NamedPitch(name="ff", octave=pitch.octave.number),)
+
+            return versions
+
+        def compose_individual_pitches_to_chords(pitches: tuple) -> tuple:
+            return tuple(
+                pitches[idx0:idx1]
+                for idx0, idx1 in zip(
+                    accumulated_n_pitches_per_item, accumulated_n_pitches_per_item[1:]
+                )
+            )
+
+        def is_interval_prohibited(interval: abjad.NamedInterval) -> bool:
+            absolute_interval = abs(interval)
+
+            # ignore tritonus, because it can't be written in a different wary
+            if absolute_interval == abjad.NamedIntervalClass(
+                "A4"
+            ) or absolute_interval == abjad.NamedIntervalClass("d5"):
+                return False
+
+            # abjad.NamedInterval.quality - attribute:
+            #     quality == 'd' for diminished (dd for diminished twice, ddd for..)
+            #     quality == 'A' for Augmented (AA for augmented twice, AAA for..)
+            quality = interval.quality.lower()
+            return "d" in quality or "a" in quality
+
+        def is_any_vertical_unit_prohibited(pitches_per_item: tuple) -> bool:
+            n_errors = 0
+            for chord in pitches_per_item:
+                if chord:
+                    for p0, p1 in itertools.combinations(chord, 2):
+                        interval = p1.pitch_class - p0.pitch_class
+                        if is_interval_prohibited(interval):
+                            n_errors += 1
+
+            return n_errors
+
+        def is_any_horizontal_unit_prohibited(
+            pitches_per_item: tuple, check_for_n_items_distance: int = 2
+        ) -> bool:
+            n_errors = 0
+            for distance in range(1, 1 + check_for_n_items_distance):
+                for chord0, chord1 in zip(
+                    pitches_per_item, pitches_per_item[distance:]
+                ):
+                    for p0, p1 in itertools.product(chord0, chord1):
+                        interval = p1.pitch_class - p0.pitch_class
+                        # ignore change of accidental in horizontal line
+                        if distance == 1:
+                            if abs(interval) != abjad.NamedInterval("A1"):
+                                if is_interval_prohibited(interval):
+                                    n_errors += 1
+                        elif distance == 2:
+                            # avoide enharmonic confusion after pause
+                            if abs(interval) == abjad.NamedInterval("d2"):
+                                n_errors += 1
+
+            return n_errors
+
+        def mk_test_function(n_allowed_errors: int) -> callable:
+            def test_if_allowed(pitches: tuple) -> bool:
+                pitches_per_item = compose_individual_pitches_to_chords(pitches)
+                n_errors = sum(
+                    (
+                        is_any_vertical_unit_prohibited(pitches_per_item),
+                        is_any_horizontal_unit_prohibited(pitches_per_item),
+                    )
+                )
+                return n_errors <= n_allowed_errors
+
+            return test_if_allowed
+
+        sorted_abjad_pitches_per_item = tuple(
+            tuple(sorted(pitches)) for pitches in abjad_pitches_per_item
+        )
+
+        n_pitches_per_item = tuple(len(p) for p in sorted_abjad_pitches_per_item)
+        accumulated_n_pitches_per_item = tools.accumulate_from_zero(n_pitches_per_item)
+
+        reduced_abjad_pitches = tuple(
+            functools.reduce(operator.add, sorted_abjad_pitches_per_item)
+        )
+        available_versions_per_pitch = tuple(
+            detect_different_versions_of_pitch(pitch) for pitch in reduced_abjad_pitches
+        )
+
+        n_allowed_errors = 0
+        solution = None
+        while not solution:
+            try:
+                solution = compose_individual_pitches_to_chords(
+                    tools.complex_backtracking(
+                        available_versions_per_pitch,
+                        (mk_test_function(n_allowed_errors),),
+                        return_indices=False,
+                    )
+                )
+            except ValueError:
+                n_allowed_errors += 1
+
+        return solution
+
+    @staticmethod
+    def _make_notes_from_novent_line(
         absolute_novent_line: tuple,
+        global_abjad_pitches: tuple,
         ratio2pitchclass_dict: dict,
         convert_mu_pitch2abjad_pitch_function,
         absolute_bar_grid: tuple,
@@ -1421,6 +1654,7 @@ class TrackMaker(abc.ABC):
     ) -> tuple:
         def make_note(
             absolute_novent_line: tuple,
+            abjad_pitches_iter: iter,
             notes: tuple = tuple([]),
             on_off_attachments: dict = {},
             previous_duration: float = 0,
@@ -1439,16 +1673,8 @@ class TrackMaker(abc.ABC):
                 glissando_subnotes_container = []
 
                 for novent in novent_splitted_by_glissando[:-1]:
-
-                    if novent.pitch:
-                        abjad_pitches = tuple(
-                            convert_mu_pitch2abjad_pitch_function(
-                                p, ratio2pitchclass_dict
-                            )
-                            for p in novent.pitch
-                        )
-
-                    else:
+                    abjad_pitches = next(abjad_pitches_iter)
+                    if not abjad_pitches:
                         abjad_pitches = None
 
                     subdelays = TrackMaker._divide2subdelays(
@@ -1458,8 +1684,9 @@ class TrackMaker(abc.ABC):
                     (
                         subdelays,
                         absolute_novent_line,
+                        abjad_pitches_iter,
                     ) = TrackMaker._adjust_novent_line_by_eigenzeit(
-                        subdelays, absolute_novent_line, novent
+                        subdelays, absolute_novent_line, novent, abjad_pitches_iter,
                     )
 
                     subnotes = TrackMaker._make_subnotes(
@@ -1482,33 +1709,154 @@ class TrackMaker(abc.ABC):
                 processed_subnotes = TrackMaker._process_glissando_notes(
                     glissando_subnotes_container,
                     novent_splitted_by_glissando[-1],
-                    convert_mu_pitch2abjad_pitch_function,
-                    ratio2pitchclass_dict,
+                    abjad_pitches_iter,
+                    absolute_novent_line,
                 )
 
                 return make_note(
                     absolute_novent_line,
+                    abjad_pitches_iter,
                     notes + processed_subnotes,
                     on_off_attachments,
                     previous_duration,
                 )
 
             else:
+
+                TrackMaker._set_glissando_layout(
+                    notes[0], thickness=2.5, minimum_length=4.5
+                )
                 return notes, on_off_attachments
 
-        return make_note(tuple(absolute_novent_line))
+        return make_note(tuple(absolute_novent_line), iter(global_abjad_pitches))
 
     @staticmethod
-    def _attach_repetitions_signs(staff: abjad.Staff, repeated_areas: tuple) -> None:
-        for area in repeated_areas:
-            start, stop = area
-            abjad.attach(abjad.BarLine(".|:", format_slot="before"), staff[start][0])
-            try:
-                abjad.attach(abjad.BarLine(":|.", format_slot="before"), staff[stop][0])
-            except IndexError:
-                abjad.attach(
-                    abjad.BarLine(":|.", format_slot="after"), staff[stop - 1][-1]
+    def _get_abjad_pitches_per_event(
+        novent_line: lily.NOventLine,
+        convert_mu_pitch2abjad_pitch_function,
+        ratio2pitchclass_dict: dict,
+        activate_accidental_finder: bool,
+        preferred_accidentals: str = "flats",
+    ) -> tuple:
+        # (1) first detect pitches per event; also separate glissando events
+        pitches_per_item = []
+        for novent in novent_line:
+
+            if novent.glissando:
+                pitch_line = tuple(
+                    gliss_event.pitch for gliss_event in novent.glissando.pitch_line
                 )
+                if pitch_line[-1] == pitch_line[-2]:
+                    pitch_line = pitch_line[:-1]
+                for gpitch in pitch_line:
+                    pitches_per_item.append(tuple(p + gpitch for p in novent.pitch))
+
+            else:
+                pitches_per_item.append(novent.pitch)
+
+        # (2) make basic conversion from mu to abjad pitches
+        abjad_pitches_per_item = []
+        for pitches in pitches_per_item:
+            if pitches:
+                abjad_pitches_per_item.append(
+                    tuple(
+                        convert_mu_pitch2abjad_pitch_function(p, ratio2pitchclass_dict)
+                        for p in pitches
+                    )
+                )
+
+            else:
+                abjad_pitches_per_item.append(tuple([]))
+
+        # (3) if asked for activate algorithm to simplify accidentals
+        #     (avoiding writing diminished and augmented intervals)
+        if not activate_accidental_finder:
+            return tuple(abjad_pitches_per_item)
+        else:
+            return TrackMaker._simplify_accidentals(
+                abjad_pitches_per_item, preferred_accidentals
+            )
+
+    @staticmethod
+    def _attach_repetitions_signs(
+        staff: abjad.Staff, repeated_areas: tuple, write_true_repetition: bool = False
+    ) -> abjad.Staff:
+        if write_true_repetition and repeated_areas:
+            repeated_bars = [
+                abjad.Container(abjad.mutate(staff[start:stop]).copy())
+                for start, stop in repeated_areas
+            ]
+
+            repeated_bar_indices = tuple(
+                tuple(range(start, stop)) for start, stop in repeated_areas
+            )
+            repeated_starts = tuple(map(operator.itemgetter(0), repeated_bar_indices))
+            reduced_repeated_bar_indices = functools.reduce(
+                operator.add, repeated_bar_indices
+            )
+
+            for repeated in repeated_bars:
+                abjad.attach(abjad.Repeat(), repeated)
+
+            new_staff = []
+            for bar_idx, bar in enumerate(staff):
+                if bar_idx in repeated_starts:
+                    new_staff.append(repeated_bars[repeated_starts.index(bar_idx)])
+
+                elif bar_idx not in reduced_repeated_bar_indices:
+                    new_staff.append(abjad.mutate(bar).copy())
+
+            return abjad.Staff(new_staff)
+
+        else:
+            for area in repeated_areas:
+                start, stop = area
+                abjad.attach(
+                    abjad.BarLine(".|:", format_slot="before"), staff[start][0]
+                )
+                try:
+                    abjad.attach(
+                        abjad.BarLine(":|.", format_slot="before"), staff[stop][0]
+                    )
+                except IndexError:
+                    abjad.attach(
+                        abjad.BarLine(":|.", format_slot="after"), staff[stop - 1][-1]
+                    )
+
+            return staff
+
+    @staticmethod
+    def _tie_novents_with_eigenzeit(novent_line: lily.NOventLine) -> lily.NOventLine:
+        def is_rest(pitch) -> bool:
+            if isinstance(pitch, AbstractPitch):
+                return pitch.is_empty
+            elif pitch is None:
+                return True
+            else:
+                return len(pitch) == 0
+
+        def sub(line):
+            new = []
+            for i, it0 in enumerate(line):
+                could_be_added = False
+
+                if i != 0:
+                    tests = (
+                        is_rest(it0.pitch),
+                        TrackMaker._test_if_novent_has_short_eigenzeit(line[i - 1]),
+                    )
+
+                    if all(tests):
+                        new[-1].delay += it0.delay
+                        new[-1].duration += it0.duration
+                        could_be_added = True
+
+                if not could_be_added:
+                    new.append(it0)
+
+            return new
+
+        return novent_line.tie_by(sub)
 
     @classmethod
     def _convert_novent_line2abjad_staff(
@@ -1519,7 +1867,12 @@ class TrackMaker(abc.ABC):
         repeated_areas: tuple = tuple([]),
         convert_mu_pitch2abjad_pitch_function=None,
         add_time_signatures: bool = True,
+        write_true_repetition: bool = False,
+        activate_accidental_finder: bool = False,
+        preferred_accidentals: str = "flats",
     ) -> abjad.Staff:
+
+        novent_line = novent_line.copy()
 
         if not convert_mu_pitch2abjad_pitch_function:
             convert_mu_pitch2abjad_pitch_function = cls._convert_mu_pitch2named_pitch
@@ -1527,8 +1880,19 @@ class TrackMaker(abc.ABC):
         bar_grid, cautious_grid, grid = cls._mk_grids(time_signatures)
         absolute_bar_grid = tools.accumulate_from_zero(bar_grid)
 
-        notes, on_off_attachments = cls._make_notes_from_novent(
+        novent_line = TrackMaker._tie_novents_with_eigenzeit(novent_line.convert2relative())
+
+        abjad_pitches = cls._get_abjad_pitches_per_event(
+            novent_line,
+            convert_mu_pitch2abjad_pitch_function,
+            ratio2pitchclass_dict,
+            activate_accidental_finder,
+            preferred_accidentals,
+        )
+
+        notes, on_off_attachments = cls._make_notes_from_novent_line(
             novent_line.convert2absolute(),
+            abjad_pitches,
             ratio2pitchclass_dict,
             convert_mu_pitch2abjad_pitch_function,
             absolute_bar_grid,
@@ -1551,7 +1915,9 @@ class TrackMaker(abc.ABC):
             )
         )
 
-        TrackMaker._attach_repetitions_signs(staff, repeated_areas)
+        staff = TrackMaker._attach_repetitions_signs(
+            staff, repeated_areas, write_true_repetition
+        )
 
         abjad.setting(staff).auto_beaming = False
         abjad.attach(abjad.LilyPondLiteral("\\numericTimeSignature"), staff[0][0])
