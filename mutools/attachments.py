@@ -129,6 +129,53 @@ class BartokPizzicato(Attachment):
         )
 
 
+class Ornamentation(Attachment):
+    name = "ornamentation"
+    attach_on_each_part = False
+    is_on_off_notation = False
+
+    def __init__(self, n_times: int):
+        self.n_times = n_times
+
+    @abc.abstractproperty
+    def _ornamentation_path() -> str:
+        raise NotImplementedError
+
+    @property
+    def _markup(self) -> abjad.Markup:
+        return abjad.Markup(
+            [
+                abjad.MarkupCommand("vspace", -0.25),
+                abjad.MarkupCommand("fontsize", -4),
+                abjad.MarkupCommand("rounded-box", ['{}'.format(self.n_times)]),
+                abjad.MarkupCommand("hspace", -0.4),
+                abjad.MarkupCommand(
+                    "path", 0.25, abjad.LilyPondLiteral(self._ornamentation_path)
+                ),
+            ],
+            direction="up",
+        )
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(self._markup, leaf)
+
+
+class OrnamentationUp(Ornamentation):
+    _ornamentation_path = """
+    #'((moveto 0 0)
+      (lineto 0.5 0)
+      (curveto 0.5 0 1.5 1.75 2.5 0)
+      (lineto 3.5 0))"""
+
+
+class OrnamentationDown(Ornamentation):
+    _ornamentation_path = """
+    #'((moveto 0 0)
+      (lineto 0.5 0)
+      (curveto 0.5 0 1.5 -1.75 2.5 0)
+      (lineto 3.5 0))"""
+
+
 class Choose(Attachment):
     name = "choose"
     attach_on_each_part = False
@@ -167,7 +214,7 @@ class Articulation(Attachment):
     attach_on_each_part = True
     is_on_off_notation = False
 
-    def __init__(self, name: str, direction: str = 'up') -> None:
+    def __init__(self, name: str, direction: str = "up") -> None:
         self.abjad = abjad.Articulation(name, direction=direction)
 
     def __eq__(self, other) -> bool:
@@ -185,7 +232,7 @@ class ArticulationOnce(Attachment):
     attach_on_each_part = False
     is_on_off_notation = False
 
-    def __init__(self, name: str, direction: str = 'up') -> None:
+    def __init__(self, name: str, direction: str = "up") -> None:
         self.abjad = abjad.Articulation(name, direction=direction)
 
     def __eq__(self, other) -> bool:
@@ -425,9 +472,13 @@ class Acciaccatura(_GraceNotesAttachment):
         self.abjad = abjad_note
         self.glissando_minimum_length = 4.15
         self.glissando_thickness = 2
+        self.added_attachments = []
 
     def attach(self, leaf: abjad.Chord, novent) -> None:
         note = abjad.mutate(self.abjad).copy()
+
+        for attachment in self.added_attachments:
+            abjad.attach(attachment, note)
 
         if self.add_glissando:
             abjad.attach(abjad.GlissandoIndicator(), note)
@@ -438,7 +489,13 @@ class Acciaccatura(_GraceNotesAttachment):
             )
 
         self._attach_grace_not_style(note)
-        if abs(note.written_pitch.number - leaf.note_heads[0].written_pitch.number) > 8:
+
+        if type(note) == abjad.Note:
+            comparision_pitch_number = note.written_pitch.number
+        else:
+            comparision_pitch_number = note.note_heads[0].written_pitch.number
+
+        if abs(comparision_pitch_number - leaf.note_heads[0].written_pitch.number) > 8:
             abjad.attach(abjad.LilyPondLiteral("\\grace"), note)
         else:
             abjad.attach(abjad.LilyPondLiteral("\\acciaccatura"), note)

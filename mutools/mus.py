@@ -185,7 +185,11 @@ class MusObject(object):
                 r'#(set-paper-size "{}")'.format(paper_format.name)
             )
 
-        if base_shortest_duration or shortest_duration_space or common_shortest_duration:
+        if (
+            base_shortest_duration
+            or shortest_duration_space
+            or common_shortest_duration
+        ):
             vspacing = "\\context {\n        \\Score\n"
             if base_shortest_duration:
                 vspacing += "        "
@@ -197,7 +201,8 @@ class MusObject(object):
                 vspacing += "        "
                 vspacing += "\\override SpacingSpanner.common-shortest-duration = "
                 vspacing += "#(ly:make-moment {}/{}) \n".format(
-                    common_shortest_duration.numerator, common_shortest_duration.denominator
+                    common_shortest_duration.numerator,
+                    common_shortest_duration.denominator,
                 )
             if shortest_duration_space:
                 vspacing += "        "
@@ -707,7 +712,12 @@ class TrackMaker(abc.ABC):
 
             # split novent in case it has an arpeggio
             if novent_copied.arpeggio:
-                arpeggio_duration = 0.075
+                arpeggio_duration = 0.11
+                while (
+                    len(novent_copied.pitch) * arpeggio_duration > novent_copied.delay
+                ):
+                    arpeggio_duration *= 0.95
+
                 for p, delay in zip(
                     sorted(novent_copied.pitch),
                     tuple(arpeggio_duration for n in novent_copied.pitch[:-1])
@@ -1156,9 +1166,7 @@ class TrackMaker(abc.ABC):
                 add_invisible_grace_note = False
 
         if add_invisible_grace_note:
-            abjad.attach(
-                abjad.LilyPondLiteral("\\grace s8"), leaf
-            )
+            abjad.attach(abjad.LilyPondLiteral("\\grace s8"), leaf)
             # abjad.attach(
             #     abjad.BeforeGraceContainer("s8"), leaf
             # )
@@ -1423,9 +1431,7 @@ class TrackMaker(abc.ABC):
         )
         abjad.attach(
             abjad.LilyPondLiteral(
-                "\\override Glissando.minimum-length = #{}".format(
-                    minimum_length
-                )
+                "\\override Glissando.minimum-length = #{}".format(minimum_length)
             ),
             leaf,
         )
@@ -1524,9 +1530,12 @@ class TrackMaker(abc.ABC):
             if versions[0].name == versions[1].name:
                 versions = (versions[0],)
 
+            """
+            # commented because this section only produces bugs without adding that much
+            # functionality.
             if pitch.pitch_class.number == 0:
                 versions += (
-                    abjad.NamedPitch(name="bs", octave=pitch.octave.number - 1),
+                    abjad.NamedPitch(name="bs", octave=int(pitch.octave.number) - 1),
                 )
 
             elif pitch.pitch_class.number == 5:
@@ -1534,11 +1543,12 @@ class TrackMaker(abc.ABC):
 
             elif pitch.pitch_class.number == 11:
                 versions += (
-                    abjad.NamedPitch(name="cf", octave=pitch.octave.number + 1),
+                    abjad.NamedPitch(name="cf", octave=int(pitch.octave.number) + 1),
                 )
 
             elif pitch.pitch_class.number == 4:
                 versions += (abjad.NamedPitch(name="ff", octave=pitch.octave.number),)
+            """
 
             return versions
 
@@ -1880,7 +1890,9 @@ class TrackMaker(abc.ABC):
         bar_grid, cautious_grid, grid = cls._mk_grids(time_signatures)
         absolute_bar_grid = tools.accumulate_from_zero(bar_grid)
 
-        novent_line = TrackMaker._tie_novents_with_eigenzeit(novent_line.convert2relative())
+        novent_line = TrackMaker._tie_novents_with_eigenzeit(
+            novent_line.convert2relative()
+        )
 
         abjad_pitches = cls._get_abjad_pitches_per_event(
             novent_line,
@@ -1921,6 +1933,10 @@ class TrackMaker(abc.ABC):
 
         abjad.setting(staff).auto_beaming = False
         abjad.attach(abjad.LilyPondLiteral("\\numericTimeSignature"), staff[0][0])
+        abjad.attach(
+            abjad.LilyPondLiteral("\\override Staff.Stem.stemlet-length = #0.75"),
+            staff[0][0],
+        )
 
         return staff
 
