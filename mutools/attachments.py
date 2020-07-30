@@ -245,6 +245,18 @@ class ArticulationOnce(Attachment):
         abjad.attach(self.abjad, leaf)
 
 
+class Prall(Attachment):
+    name = "prall"
+    attach_on_each_part = False
+    is_on_off_notation = False
+
+    def __init__(self) -> None:
+        self.abjad = abjad.LilyPondLiteral('^\\prall', format_slot='after')
+
+    def attach(self, leaf: abjad.Chord, novent) -> None:
+        abjad.attach(self.abjad, leaf)
+
+
 class NaturalHarmonic(Attachment):
     name = "natural_harmonic"
     attach_on_each_part = False

@@ -948,8 +948,7 @@ class TrackMaker(abc.ABC):
                             sorted_pos = tuple(
                                 item[1] for item in sorted(pos, key=lambda x: x[0][0])
                             )
-                            fitness = len(sorted_pos)
-                            possibilites.append(sorted_pos, fitness)
+                            possibilites.append(sorted_pos, len(sorted_pos))
                             has_found = True
 
                     if has_found:
@@ -1246,13 +1245,15 @@ class TrackMaker(abc.ABC):
         # make as many small grids as the smallest size of an beat
         new_sub_delays = []
         for sta, sto in zip(sub_delays, sub_delays[1:]):
-            smallest_beat = min((sta.denominator, sto.denominator))
+            smallest_beat = max((sta.denominator, sto.denominator))
             if smallest_beat > 8:
-                gs = fractions.Fraction(1, smallest_beat // 2)
+                if sta.denominator == sto.denominator:
+                    gs = fractions.Fraction(1, smallest_beat // 2)
+                else:
+                    gs = fractions.Fraction(1, smallest_beat)
                 n_times = sto // gs
                 local_grid = tuple(gs for _ in range(n_times))
                 seperated = TrackMaker._seperate_by_grid(sta, sto, local_grid)
-
             else:
                 seperated = (sto - sta,)
 
@@ -1704,11 +1705,6 @@ class TrackMaker(abc.ABC):
                     )
                     previous_duration += sum(subdelays)
 
-                    # make attachments
-                    TrackMaker._process_attachments(
-                        novent, notes, subnotes, on_off_attachments
-                    )
-
                     # tie notes
                     if abjad_pitches is not None and len(subnotes) > 1:
                         for note in subnotes[:-1]:
@@ -1721,6 +1717,11 @@ class TrackMaker(abc.ABC):
                     novent_splitted_by_glissando[-1],
                     abjad_pitches_iter,
                     absolute_novent_line,
+                )
+
+                # make attachments
+                TrackMaker._process_attachments(
+                    novent, notes, processed_subnotes, on_off_attachments
                 )
 
                 return make_note(
@@ -1882,7 +1883,7 @@ class TrackMaker(abc.ABC):
         preferred_accidentals: str = "flats",
     ) -> abjad.Staff:
 
-        novent_line = novent_line.copy()
+        novent_line = novent_line.copy().tie_pauses()
 
         if not convert_mu_pitch2abjad_pitch_function:
             convert_mu_pitch2abjad_pitch_function = cls._convert_mu_pitch2named_pitch
